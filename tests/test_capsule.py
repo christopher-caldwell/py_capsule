@@ -530,8 +530,14 @@ def test_project_capsule_and_runtime_log_level_precedence(
     run(capsule, log_level="info")
     assert "visible at info" in capsys.readouterr().err
 
-    with pytest.raises(CapsuleConfigError, match="log_level"):
+    with pytest.raises(CapsuleConfigError, match="log_level") as raised:
         run(capsule, log_level="trace")
+    assert raised.value.run_dir is not None
+    assert "run evidence" in str(raised.value)
+    metadata = json.loads((raised.value.run_dir / "run.json").read_text())
+    assert metadata["status"] == "failed"
+    assert metadata["name"] == "sample"
+    assert "log_level" in (raised.value.run_dir / "run.log").read_text()
 
 
 def test_project_config_rejects_invalid_log_level(
@@ -545,8 +551,67 @@ def test_project_config_rejects_invalid_log_level(
         encoding="utf-8",
     )
     (capsule / "tool.py").write_text("return True\n", encoding="utf-8")
-    with pytest.raises(CapsuleConfigError, match="log_level"):
+    with pytest.raises(CapsuleConfigError, match="log_level") as raised:
         run(capsule)
+    assert raised.value.run_dir is not None
+    metadata = json.loads((raised.value.run_dir / "run.json").read_text())
+    assert metadata["name"] == "sample"
+    assert metadata["status"] == "failed"
+    assert metadata["error_type"] == "CapsuleConfigError"
+    assert "log_level" in (raised.value.run_dir / "run.log").read_text()
+
+
+def test_capsule_config_rejects_invalid_log_level_with_run_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    isolated_home(monkeypatch, tmp_path)
+    _, capsule = make_project(tmp_path)
+    (capsule / "capsule.toml").write_text(
+        'name = "sample"\ntool = "tool.py"\nlog_level = "trace"\n',
+        encoding="utf-8",
+    )
+    (capsule / "tool.py").write_text("return True\n", encoding="utf-8")
+
+    with pytest.raises(CapsuleConfigError, match="log_level") as raised:
+        run(capsule)
+
+    assert raised.value.run_dir is not None
+    metadata = json.loads((raised.value.run_dir / "run.json").read_text())
+    assert metadata["name"] == "sample"
+    assert metadata["status"] == "failed"
+    assert "log_level" in (raised.value.run_dir / "run.log").read_text()
+
+
+def test_invalid_runtime_mapping_retains_failed_attempt_after_capsule_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    isolated_home(monkeypatch, tmp_path)
+    _, capsule = make_project(tmp_path)
+    (capsule / "tool.py").write_text("return True\n", encoding="utf-8")
+
+    with pytest.raises(CapsuleConfigError, match="inputs.*identifier") as raised:
+        run(capsule, inputs={"not-valid": "value"})
+
+    assert raised.value.run_dir is not None
+    metadata = json.loads((raised.value.run_dir / "run.json").read_text())
+    assert metadata["status"] == "failed"
+    assert metadata["capsule_dir"] == str(capsule.resolve())
+    assert "not-valid" in (raised.value.run_dir / "run.log").read_text()
+
+
+def test_manifest_without_usable_name_does_not_create_a_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    isolated_home(monkeypatch, tmp_path)
+    _, capsule = make_project(tmp_path)
+    (capsule / "capsule.toml").write_text(
+        'name = "../escape"\ntool = "tool.py"\n', encoding="utf-8"
+    )
+    with pytest.raises(CapsuleConfigError, match="single path component") as raised:
+        run(capsule)
+
+    assert raised.value.run_dir is None
+    assert not (tmp_path / "home/.py_capsule").exists()
 
 
 def test_documented_wrapper_executes_example_shape_against_local_http_fixture(

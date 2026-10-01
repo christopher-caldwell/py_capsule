@@ -15,7 +15,13 @@ _RUNNER_GLOBAL_NAME = "__py_capsule_execute__"
 
 
 class CapsuleConfigError(ValueError):
-    """The capsule manifest or supplied runtime configuration is invalid."""
+    """Configuration is invalid; ``run_dir`` is set when evidence was retained."""
+
+    def __init__(self, message: str, run_dir: Path | None = None):
+        self.message = message
+        self.run_dir = run_dir
+        detail = f"{message} (run evidence: {run_dir})" if run_dir is not None else message
+        super().__init__(detail)
 
 
 @dataclass(frozen=True)
@@ -24,6 +30,13 @@ class ConfigLayer:
     literal_globals: dict[str, Any]
     env: dict[str, str]
     log_level: str | None
+
+
+@dataclass(frozen=True)
+class CapsuleIdentity:
+    name: str
+    capsule_dir: Path
+    manifest_path: Path
 
 
 @dataclass(frozen=True)
@@ -157,7 +170,7 @@ def _project_directory(capsule_dir: Path, selection: Any, source: Path) -> Path:
     )
 
 
-def load_capsule(capsule_dir: str | Path) -> CapsuleConfig:
+def read_capsule_manifest(capsule_dir: str | Path) -> tuple[CapsuleIdentity, dict[str, Any]]:
     capsule = Path(capsule_dir).expanduser().resolve()
     if not capsule.is_dir():
         raise CapsuleConfigError(f"capsule directory does not exist: {capsule}")
@@ -171,6 +184,13 @@ def load_capsule(capsule_dir: str | Path) -> CapsuleConfig:
         raise CapsuleConfigError(f"cannot read {manifest}: {exc}") from exc
 
     name = _validate_name(data.get("name"), manifest)
+    return CapsuleIdentity(name, capsule, manifest), data
+
+
+def load_capsule(identity: CapsuleIdentity, data: Mapping[str, Any]) -> CapsuleConfig:
+    capsule = identity.capsule_dir
+    manifest = identity.manifest_path
+    name = identity.name
     tool = data.get("tool")
     if not isinstance(tool, str) or not tool:
         raise CapsuleConfigError(f"{manifest}: tool must be a nonempty path string")

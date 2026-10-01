@@ -83,10 +83,13 @@ Snippet stdout/stderr, `Session.log_event` records and `uv` diagnostics are
 captured in `run.log`. Each run also has a `run.json` provenance record; a
 successful JSON-compatible return is in `result.json`. Ordinary execution
 failures raise `CapsuleExecutionError`, whose `run_dir` points to the retained
-evidence. Manifest and runtime mapping validation errors raise
-`CapsuleConfigError`; execution-time configuration and child failures are
-wrapped in `CapsuleExecutionError`. A returned error-shaped business value
-remains an ordinary successful value.
+evidence. Before a valid capsule name can be read, manifest failures raise
+`CapsuleConfigError` without creating a run. After the name is known, manifest,
+runtime mapping and merge validation failures create a failed run with
+diagnostics and raise `CapsuleConfigError` with `run_dir` set to that evidence.
+Missing effective environment values and child execution failures raise
+`CapsuleExecutionError`, also with `run_dir`. A returned error-shaped business
+value remains an ordinary successful value.
 
 Log levels are `none`, `error`, `info` and `debug`; the default is `none`.
 Retention is independent of terminal display. `none` never mirrors logs.

@@ -14,11 +14,14 @@ from typing import Any, Mapping, TextIO
 
 from ._config import (
     CapsuleConfigError,
+    CapsuleIdentity,
+    CapsuleConfig,
     _validate_json_value,
     effective_globals,
     effective_inputs,
     effective_log_level,
     load_capsule,
+    read_capsule_manifest,
     validate_runtime_mapping,
 )
 
@@ -216,7 +219,8 @@ def _make_run_dir(name: str) -> Path:
 def _record(
     path: Path,
     *,
-    config: Any,
+    identity: CapsuleIdentity,
+    config: CapsuleConfig | None,
     run_id: str,
     started_at: str,
     status: str,
@@ -227,13 +231,13 @@ def _record(
         path,
         {
             "run_id": run_id,
-            "name": config.name,
+            "name": identity.name,
             "status": status,
             "started_at": started_at,
             "finished_at": finished_at,
-            "capsule_dir": str(config.capsule_dir),
-            "tool_path": str(config.tool_path),
-            "project_dir": str(config.project_dir),
+            "capsule_dir": str(identity.capsule_dir),
+            "tool_path": str(config.tool_path) if config else None,
+            "project_dir": str(config.project_dir) if config else None,
             "error_type": error_type,
         },
     )
@@ -251,31 +255,8 @@ def run(
     that order. Values transferred to the child must be JSON-compatible. See
     README.md for manifest details.
     """
-    config = load_capsule(capsule_dir)
-    runtime_inputs = validate_runtime_mapping(inputs, "inputs")
-    runtime_globals = validate_runtime_mapping(globals, "globals")
-    selected_level = effective_log_level(config, log_level)
-
-    final_inputs = effective_inputs(config, runtime_inputs)
-    for name, value in final_inputs.items():
-        if not isinstance(name, str) or not name.isidentifier():
-            raise CapsuleConfigError(f"input name {name!r} must be a Python identifier")
-        _validate_json_value(value, f"inputs.{name}")
-    effective_global_names = (
-        set(config.project_defaults.literal_globals)
-        | set(config.project_defaults.env)
-        | set(config.capsule_settings.literal_globals)
-        | set(config.capsule_settings.env)
-        | set(runtime_globals)
-    )
-    collisions = set(final_inputs) & effective_global_names
-    if collisions:
-        collision = sorted(collisions)[0]
-        raise CapsuleConfigError(
-            f"injection name {collision!r} is present in both effective inputs and globals"
-        )
-
-    run_dir = _make_run_dir(config.name)
+    identity, manifest_data = read_capsule_manifest(capsule_dir)
+    run_dir = _make_run_dir(identity.name)
     run_id = run_dir.name
     run_log = run_dir / "run.log"
     metadata_path = run_dir / "run.json"
@@ -287,14 +268,8 @@ def run(
         "error": run_dir / ".execution-error.json",
     }
     started = datetime.now(timezone.utc).isoformat()
-    _record(
-        metadata_path,
-        config=config,
-        run_id=run_id,
-        started_at=started,
-        status="running",
-    )
-
+    config: CapsuleConfig | None = None
+    selected_level = "none"
     runner_stdout = ""
     runner_stderr = ""
     snippet_stdout = ""
@@ -302,7 +277,47 @@ def run(
     events: list[dict[str, str]] = []
     error: dict[str, str] | None = None
     captured_written = False
+    execution_context_started = False
     try:
+        _record(
+            metadata_path,
+            identity=identity,
+            config=None,
+            run_id=run_id,
+            started_at=started,
+            status="running",
+        )
+        config = load_capsule(identity, manifest_data)
+        _record(
+            metadata_path,
+            identity=identity,
+            config=config,
+            run_id=run_id,
+            started_at=started,
+            status="running",
+        )
+        selected_level = effective_log_level(config, log_level)
+        runtime_inputs = validate_runtime_mapping(inputs, "inputs")
+        runtime_globals = validate_runtime_mapping(globals, "globals")
+        final_inputs = effective_inputs(config, runtime_inputs)
+        for name, value in final_inputs.items():
+            if not isinstance(name, str) or not name.isidentifier():
+                raise CapsuleConfigError(f"input name {name!r} must be a Python identifier")
+            _validate_json_value(value, f"inputs.{name}")
+        effective_global_names = (
+            set(config.project_defaults.literal_globals)
+            | set(config.project_defaults.env)
+            | set(config.capsule_settings.literal_globals)
+            | set(config.capsule_settings.env)
+            | set(runtime_globals)
+        )
+        collisions = set(final_inputs) & effective_global_names
+        if collisions:
+            collision = sorted(collisions)[0]
+            raise CapsuleConfigError(
+                f"injection name {collision!r} is present in both effective inputs and globals"
+            )
+        execution_context_started = True
         resolved_globals = effective_globals(config, runtime_globals)
         request = {
             "project_dir": str(config.project_dir),
@@ -364,6 +379,7 @@ def run(
         if completed.returncode != 0:
             _record(
                 metadata_path,
+                identity=identity,
                 config=config,
                 run_id=run_id,
                 started_at=started,
@@ -390,6 +406,7 @@ def run(
         value = json.loads(result_path.read_text(encoding="utf-8"))
         _record(
             metadata_path,
+            identity=identity,
             config=config,
             run_id=run_id,
             started_at=started,
@@ -423,6 +440,7 @@ def run(
             _append_log(run_log, error_detail=detail)
         _record(
             metadata_path,
+            identity=identity,
             config=config,
             run_id=run_id,
             started_at=started,
@@ -440,7 +458,9 @@ def run(
             error_detail=detail,
         )
         if isinstance(exc, CapsuleConfigError):
-            raise CapsuleExecutionError(str(exc), run_dir, cause=exc) from exc
+            if execution_context_started:
+                raise CapsuleExecutionError(str(exc), run_dir, cause=exc) from exc
+            raise CapsuleConfigError(exc.message, run_dir=run_dir) from exc
         raise CapsuleExecutionError(f"capsule execution failed: {exc}", run_dir, cause=exc) from exc
     finally:
         for path in capture_paths.values():
