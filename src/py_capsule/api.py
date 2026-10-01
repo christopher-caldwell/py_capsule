@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -57,34 +58,142 @@ def _write_json(path: Path, value: Any) -> None:
     os.replace(temporary, path)
 
 
-def _append_log(path: Path, stdout: str, stderr: str) -> None:
+def _read_capture(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except FileNotFoundError:
+        return ""
+
+
+def _read_events(path: Path) -> list[dict[str, str]]:
+    events: list[dict[str, str]] = []
+    for line in _read_capture(path).splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            events.append({"level": "info", "source": "Session.log_event", "message": line})
+            continue
+        if isinstance(event, dict):
+            events.append(
+                {
+                    "level": str(event.get("level", "info")),
+                    "source": str(event.get("source", "Session.log_event")),
+                    "message": str(event.get("message", "")),
+                }
+            )
+    return events
+
+
+def _read_error(path: Path) -> dict[str, str] | None:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(value, dict):
+        return None
+    return {
+        "type": str(value.get("type", "CapsuleExecutionError")),
+        "message": str(value.get("message", "capsule execution failed")),
+        "traceback": str(value.get("traceback", "")),
+    }
+
+
+def _recognized_uv_errors(stdout: str, stderr: str) -> str:
+    error_prefix = re.compile(r"^\s*(?:error:|×|caused by:)", re.IGNORECASE)
+    lines = [
+        line
+        for output in (stdout, stderr)
+        for line in output.splitlines()
+        if error_prefix.match(line)
+    ]
+    return "\n".join(lines)
+
+
+def _failure_detail(
+    error: dict[str, str] | None,
+    runner_stdout: str,
+    runner_stderr: str,
+    returncode: int,
+) -> str:
+    if error is not None:
+        return error["message"] or error["traceback"] or "capsule execution failed"
+    recognized = _recognized_uv_errors(runner_stdout, runner_stderr)
+    return recognized or f"uv child exited with status {returncode}"
+
+
+def _append_section(stream: TextIO, title: str, content: str) -> None:
+    if not content:
+        return
+    stream.write(f"=== {title} ===\n")
+    stream.write(content)
+    if not content.endswith("\n"):
+        stream.write("\n")
+
+
+def _append_log(
+    path: Path,
+    *,
+    runner_stdout: str = "",
+    runner_stderr: str = "",
+    snippet_stdout: str = "",
+    snippet_stderr: str = "",
+    events: list[dict[str, str]] | None = None,
+    error_detail: str = "",
+    runner_failure: str = "",
+) -> None:
     with path.open("a", encoding="utf-8") as stream:
-        if stdout:
-            stream.write("=== child stdout ===\n")
-            stream.write(stdout)
-            if not stdout.endswith("\n"):
-                stream.write("\n")
-        if stderr:
-            stream.write("=== child stderr ===\n")
-            stream.write(stderr)
-            if not stderr.endswith("\n"):
-                stream.write("\n")
+        _append_section(stream, "uv stdout", runner_stdout)
+        _append_section(stream, "uv stderr", runner_stderr)
+        _append_section(stream, "snippet stdout", snippet_stdout)
+        _append_section(stream, "snippet stderr", snippet_stderr)
+        if events:
+            stream.write("=== Session.log_event (info) ===\n")
+            for event in events:
+                stream.write(event["message"])
+                if not event["message"].endswith("\n"):
+                    stream.write("\n")
+        _append_section(stream, "capsule execution error", error_detail)
+        _append_section(stream, "uv execution error", runner_failure)
 
 
-def _mirror_logs(level: str, stdout: str, stderr: str, *, failed: bool) -> None:
+def _write_terminal(stderr: str, label: str, content: str) -> None:
+    if not content:
+        return
+    stderr.write(f"[py_capsule {label}]\n{content}")
+    if not content.endswith("\n"):
+        stderr.write("\n")
+
+
+def _mirror_logs(
+    level: str,
+    *,
+    runner_stdout: str = "",
+    runner_stderr: str = "",
+    snippet_stdout: str = "",
+    snippet_stderr: str = "",
+    events: list[dict[str, str]] | None = None,
+    error_detail: str = "",
+    runner_failure: str = "",
+) -> None:
     if level == "none":
         return
     if level == "error":
-        if failed and stderr:
-            sys.stderr.write(stderr)
-            if not stderr.endswith("\n"):
-                sys.stderr.write("\n")
+        diagnostic = error_detail or runner_failure
+        _write_terminal(sys.stderr, "error", diagnostic)
         return
-    for label, content in (("stdout", stdout), ("stderr", stderr)):
-        if content:
-            sys.stderr.write(f"[py_capsule {label}]\n{content}")
-            if not content.endswith("\n"):
-                sys.stderr.write("\n")
+
+    _write_terminal(sys.stderr, "stdout", snippet_stdout)
+    _write_terminal(sys.stderr, "stderr", snippet_stderr)
+    for event in events or []:
+        _write_terminal(
+            sys.stderr,
+            f"{event['level']} {event['source']}",
+            event["message"],
+        )
+    _write_terminal(sys.stderr, "error", error_detail or runner_failure)
+    if level == "debug":
+        _write_terminal(sys.stderr, "uv stdout", runner_stdout)
+        _write_terminal(sys.stderr, "uv stderr", runner_stderr)
 
 
 def _make_run_dir(name: str) -> Path:
@@ -155,14 +264,28 @@ def run(
     for name, value in effective_inputs.items():
         if not isinstance(name, str) or not name.isidentifier():
             raise CapsuleConfigError(f"input name {name!r} must be a Python identifier")
-        # Manifest names were validated; this also validates values inherited there.
         _validate_json_value(value, f"inputs.{name}")
+    effective_global_names = (
+        set(config.literal_globals) | set(config.env) | set(runtime_globals)
+    )
+    collisions = set(effective_inputs) & effective_global_names
+    if collisions:
+        collision = sorted(collisions)[0]
+        raise CapsuleConfigError(
+            f"injection name {collision!r} is present in both effective inputs and globals"
+        )
 
     run_dir = _make_run_dir(config.name)
     run_id = run_dir.name
     run_log = run_dir / "run.log"
     metadata_path = run_dir / "run.json"
     result_path = run_dir / "result.json"
+    capture_paths = {
+        "stdout": run_dir / ".child.stdout",
+        "stderr": run_dir / ".child.stderr",
+        "events": run_dir / ".session-events.jsonl",
+        "error": run_dir / ".execution-error.json",
+    }
     started = datetime.now(timezone.utc).isoformat()
     _record(
         metadata_path,
@@ -172,8 +295,13 @@ def run(
         status="running",
     )
 
-    stdout = ""
-    stderr = ""
+    runner_stdout = ""
+    runner_stderr = ""
+    snippet_stdout = ""
+    snippet_stderr = ""
+    events: list[dict[str, str]] = []
+    error: dict[str, str] | None = None
+    captured_written = False
     try:
         resolved_globals = effective_globals(config, runtime_globals)
         request = {
@@ -194,6 +322,10 @@ def run(
             "python",
             str(Path(__file__).with_name("_worker.py")),
             str(result_path),
+            str(capture_paths["stdout"]),
+            str(capture_paths["stderr"]),
+            str(capture_paths["events"]),
+            str(capture_paths["error"]),
         ]
         completed = subprocess.run(
             command,
@@ -206,9 +338,29 @@ def run(
             stderr=subprocess.PIPE,
             check=False,
         )
-        stdout, stderr = completed.stdout, completed.stderr
-        _append_log(run_log, stdout, stderr)
-        _mirror_logs(selected_level, stdout, stderr, failed=completed.returncode != 0)
+        runner_stdout, runner_stderr = completed.stdout, completed.stderr
+        snippet_stdout = _read_capture(capture_paths["stdout"])
+        snippet_stderr = _read_capture(capture_paths["stderr"])
+        events = _read_events(capture_paths["events"])
+        error = _read_error(capture_paths["error"])
+        error_detail = error["traceback"] if error is not None else ""
+        runner_failure = ""
+        if completed.returncode != 0 and error is None:
+            runner_failure = _failure_detail(
+                None, runner_stdout, runner_stderr, completed.returncode
+            )
+        _append_log(
+            run_log,
+            runner_stdout=runner_stdout,
+            runner_stderr=runner_stderr,
+            snippet_stdout=snippet_stdout,
+            snippet_stderr=snippet_stderr,
+            events=events,
+            error_detail=error_detail,
+            runner_failure=runner_failure,
+        )
+        captured_written = True
+
         if completed.returncode != 0:
             _record(
                 metadata_path,
@@ -217,10 +369,22 @@ def run(
                 started_at=started,
                 finished_at=datetime.now(timezone.utc).isoformat(),
                 status="failed",
-                error_type="CapsuleExecutionError",
+                error_type=error["type"] if error is not None else "CapsuleExecutionError",
             )
-            detail = stderr.strip() or f"uv child exited with status {completed.returncode}"
-            raise CapsuleExecutionError(detail, run_dir)
+            _mirror_logs(
+                selected_level,
+                runner_stdout=runner_stdout,
+                runner_stderr=runner_stderr,
+                snippet_stdout=snippet_stdout,
+                snippet_stderr=snippet_stderr,
+                events=events,
+                error_detail=error_detail,
+                runner_failure=runner_failure,
+            )
+            raise CapsuleExecutionError(
+                _failure_detail(error, runner_stdout, runner_stderr, completed.returncode),
+                run_dir,
+            )
         if not result_path.is_file():
             raise RuntimeError("child exited successfully without writing a return value")
         value = json.loads(result_path.read_text(encoding="utf-8"))
@@ -232,15 +396,31 @@ def run(
             finished_at=datetime.now(timezone.utc).isoformat(),
             status="succeeded",
         )
+        _mirror_logs(
+            selected_level,
+            runner_stdout=runner_stdout,
+            runner_stderr=runner_stderr,
+            snippet_stdout=snippet_stdout,
+            snippet_stderr=snippet_stderr,
+            events=events,
+        )
         return CapsuleResult(value=value, run_dir=run_dir)
     except CapsuleExecutionError:
         raise
     except Exception as exc:
-        if not run_log.exists():
-            run_log.touch()
-        with run_log.open("a", encoding="utf-8") as stream:
-            stream.write(f"=== py_capsule failure ===\n{type(exc).__name__}: {exc}\n")
-        _mirror_logs(selected_level, stdout, stderr, failed=True)
+        detail = f"{type(exc).__name__}: {exc}"
+        if not captured_written:
+            _append_log(
+                run_log,
+                runner_stdout=runner_stdout,
+                runner_stderr=runner_stderr,
+                snippet_stdout=snippet_stdout,
+                snippet_stderr=snippet_stderr,
+                events=events,
+                error_detail=detail,
+            )
+        else:
+            _append_log(run_log, error_detail=detail)
         _record(
             metadata_path,
             config=config,
@@ -250,10 +430,21 @@ def run(
             status="failed",
             error_type=type(exc).__name__,
         )
+        _mirror_logs(
+            selected_level,
+            runner_stdout=runner_stdout,
+            runner_stderr=runner_stderr,
+            snippet_stdout=snippet_stdout,
+            snippet_stderr=snippet_stderr,
+            events=events,
+            error_detail=detail,
+        )
         if isinstance(exc, CapsuleConfigError):
-            if selected_level == "error":
-                sys.stderr.write(f"py_capsule: {exc}\n")
             raise CapsuleExecutionError(str(exc), run_dir, cause=exc) from exc
-        if selected_level == "error" and not stderr:
-            sys.stderr.write(f"py_capsule: {type(exc).__name__}: {exc}\n")
         raise CapsuleExecutionError(f"capsule execution failed: {exc}", run_dir, cause=exc) from exc
+    finally:
+        for path in capture_paths.values():
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass

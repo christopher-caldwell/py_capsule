@@ -30,7 +30,10 @@ TEST_SERVICE_API_KEY = "LOCAL_TEST_SERVICE_API_KEY"
 `env` maps an injected name to the name of a variable in the host process. The
 runner resolves only the winning environment mapping and never copies the whole
 host environment. One manifest cannot define a global destination in both
-`[globals]` and `[env]`. Duplicate TOML keys are rejected by the TOML parser.
+`[globals]` and `[env]`. Input names cannot also be defined as global names in
+the same manifest, and the final effective input/global namespaces cannot
+overlap. The global name `__py_capsule_execute__` is reserved for the runner.
+Duplicate TOML keys are rejected by the TOML parser.
 
 Runtime mappings passed to `run(capsule_dir, inputs=..., globals=...,
 log_level=...)` replace configured values by name, including `False`, `0`, empty
@@ -48,22 +51,29 @@ shim, not full Decagon runtime emulation.
 `run()` returns a `CapsuleResult` with `value` and `run_dir`. It does not print
 the return value. `result.print_json()` writes one strict JSON value and a
 newline to caller stdout; a returned string remains a JSON string. Unsupported
-return values, including non-finite floats, fail clearly.
+return values, including non-finite floats, fail clearly. Return validation
+rejects unsupported shapes before writing `result.json`; object keys must
+already be strings and are never coerced.
 
-The child process's stdout and stderr, including `uv` diagnostics and
-`Session.log_event` messages, are captured in `run.log`. Each run also has a
-`run.json` provenance record; a successful JSON-compatible return is in
-`result.json`. Ordinary execution failures raise `CapsuleExecutionError`, whose
-`run_dir` points to the retained evidence. Manifest and runtime mapping
-validation errors raise `CapsuleConfigError`; execution-time configuration and
-child failures are wrapped in `CapsuleExecutionError`. A returned error-shaped
-business value remains an ordinary successful value.
+Snippet stdout/stderr, `Session.log_event` records and `uv` diagnostics are
+captured in `run.log`. Each run also has a `run.json` provenance record; a
+successful JSON-compatible return is in `result.json`. Ordinary execution
+failures raise `CapsuleExecutionError`, whose `run_dir` points to the retained
+evidence. Manifest and runtime mapping validation errors raise
+`CapsuleConfigError`; execution-time configuration and child failures are
+wrapped in `CapsuleExecutionError`. A returned error-shaped business value
+remains an ordinary successful value.
 
 Log levels are `none`, `error`, `info` and `debug`; the default is `none`.
 Retention is independent of terminal display. `none` never mirrors logs.
-`error` mirrors captured stderr on failed execution; `info` and `debug` mirror
-captured child output to caller stderr. The caller's stdout is not replaced.
-User wrapper prints and shell stream merging are outside this guarantee.
+`Session.log_event` records are classified as info events, separately from
+snippet stdout/stderr and `uv` launcher output. `error` mirrors structured
+capsule failures or recognized `uv` error diagnostics; it does not mirror
+ordinary Session messages, unstructured snippet output, or `uv` progress just
+because they appeared on stderr. `info` mirrors snippet streams, Session events
+and execution failures to caller stderr. `debug` also mirrors `uv` launcher
+diagnostics. The caller stdout is not replaced. User wrapper prints and shell
+stream merging are outside this guarantee.
 
 Run directories use the shared capsule name namespace under
 `~/.py_capsule/<name>/runs/<unique-id>/`. Same-named capsules intentionally share

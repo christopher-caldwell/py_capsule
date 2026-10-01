@@ -11,6 +11,7 @@ from typing import Any, Mapping
 
 _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 _LOG_LEVELS = {"none", "error", "info", "debug"}
+_RUNNER_GLOBAL_NAME = "__py_capsule_execute__"
 
 
 class CapsuleConfigError(ValueError):
@@ -72,6 +73,10 @@ def _validate_injection_names(values: Mapping[str, Any], label: str, source: Pat
         if not isinstance(name, str) or not name.isidentifier() or keyword.iskeyword(name):
             raise CapsuleConfigError(
                 f"{source}: {label} destination {name!r} must be a Python identifier"
+            )
+        if label in {"globals", "env"} and name == _RUNNER_GLOBAL_NAME:
+            raise CapsuleConfigError(
+                f"{source}: global destination {name!r} is reserved by the capsule runner"
             )
 
 
@@ -135,6 +140,13 @@ def load_capsule(capsule_dir: str | Path) -> CapsuleConfig:
         raise CapsuleConfigError(
             f"{manifest}: global {duplicate!r} is defined in both [globals] and [env]"
         )
+    input_global_collisions = inputs.keys() & (literal_globals.keys() | env.keys())
+    if input_global_collisions:
+        collision = sorted(input_global_collisions)[0]
+        raise CapsuleConfigError(
+            f"{manifest}: injection name {collision!r} is defined in both [inputs] "
+            "and a global source ([globals] or [env])"
+        )
     for key, value in inputs.items():
         _validate_json_value(value, f"{manifest} [inputs].{key}")
     for key, value in literal_globals.items():
@@ -171,6 +183,10 @@ def validate_runtime_mapping(value: Mapping[str, Any] | None, label: str) -> dic
     for name, item in result.items():
         if not isinstance(name, str) or not name.isidentifier() or keyword.iskeyword(name):
             raise CapsuleConfigError(f"{label} key {name!r} must be a Python identifier")
+        if label == "globals" and name == _RUNNER_GLOBAL_NAME:
+            raise CapsuleConfigError(
+                f"global name {name!r} is reserved by the capsule runner"
+            )
         _validate_json_value(item, f"{label}.{name}")
     return result
 

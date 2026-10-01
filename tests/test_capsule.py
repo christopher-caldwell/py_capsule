@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import importlib.util
+import shutil
+import shlex
 from pathlib import Path
 
 import pytest
@@ -73,6 +75,18 @@ def test_print_json_is_only_the_json_return_value(
     result = run(capsule)
     result.print_json()
     assert capsys.readouterr().out == '"true"\n'
+
+
+def test_multiline_string_contents_are_preserved_when_wrapping_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    isolated_home(monkeypatch, tmp_path)
+    _, capsule = make_project(tmp_path)
+    source = "return '''first\nsecond'''\n"
+    (capsule / "tool.py").write_text(source, encoding="utf-8")
+    result = run(capsule)
+    assert result.value == "first\nsecond"
+    assert (capsule / "tool.py").read_text(encoding="utf-8") == source
 
 
 def test_target_project_dependency_is_available_only_in_the_uv_child(
@@ -156,8 +170,22 @@ def test_unsupported_return_value_fails_instead_of_being_stringified(
     (capsule / "tool.py").write_text("return object()\n", encoding="utf-8")
     with pytest.raises(CapsuleExecutionError) as raised:
         run(capsule)
-    assert "not JSON serializable" in (raised.value.run_dir / "run.log").read_text()
+    assert "unsupported type object" in (raised.value.run_dir / "run.log").read_text()
     assert json.loads((raised.value.run_dir / "run.json").read_text())["status"] == "failed"
+    assert not (raised.value.run_dir / "result.json").exists()
+
+
+def test_integer_return_object_keys_fail_without_string_coercion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    isolated_home(monkeypatch, tmp_path)
+    _, capsule = make_project(tmp_path)
+    (capsule / "tool.py").write_text("return {1: 'one'}\n", encoding="utf-8")
+    with pytest.raises(CapsuleExecutionError) as raised:
+        run(capsule)
+    log = (raised.value.run_dir / "run.log").read_text()
+    assert "object keys must be strings" in log
+    assert not (raised.value.run_dir / "result.json").exists()
 
 
 def test_secret_is_not_written_to_provenance_and_effective_env_is_resolved(
@@ -205,6 +233,48 @@ def test_duplicate_global_sources_in_one_manifest_are_rejected(
         run(capsule)
 
 
+def test_input_and_global_destinations_cannot_collide_in_one_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    isolated_home(monkeypatch, tmp_path)
+    _, capsule = make_project(tmp_path)
+    (capsule / "capsule.toml").write_text(
+        'name = "sample"\ntool = "tool.py"\n[inputs]\nshared = "input"\n'
+        '[globals]\nshared = "global"\n',
+        encoding="utf-8",
+    )
+    (capsule / "tool.py").write_text("return shared\n", encoding="utf-8")
+    with pytest.raises(CapsuleConfigError, match=r"both \[inputs\].*global source"):
+        run(capsule)
+
+
+def test_effective_runtime_input_and_global_destinations_cannot_collide(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    isolated_home(monkeypatch, tmp_path)
+    _, capsule = make_project(tmp_path)
+    (capsule / "tool.py").write_text("return shared\n", encoding="utf-8")
+    with pytest.raises(CapsuleConfigError, match="both effective inputs and globals"):
+        run(capsule, inputs={"shared": "input"}, globals={"shared": "global"})
+
+
+def test_generated_function_global_name_is_reserved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    isolated_home(monkeypatch, tmp_path)
+    _, capsule = make_project(tmp_path)
+    (capsule / "tool.py").write_text("return 1\n", encoding="utf-8")
+    with pytest.raises(CapsuleConfigError, match="__py_capsule_execute__.*reserved"):
+        run(capsule, globals={"__py_capsule_execute__": "caller value"})
+    (capsule / "capsule.toml").write_text(
+        'name = "sample"\ntool = "tool.py"\n'
+        '[globals]\n__py_capsule_execute__ = "configured value"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(CapsuleConfigError, match="__py_capsule_execute__.*reserved"):
+        run(capsule)
+
+
 def test_runs_are_unique_and_same_named_capsules_share_history(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -242,6 +312,49 @@ def test_enabled_logging_stays_on_caller_stderr_and_json_stays_clean_on_stdout(
     assert captured.out == '{"ok":true}\n'
     assert "ordinary activity" in captured.err
     assert "session activity" in captured.err
+
+
+def test_error_level_mirrors_failures_but_not_session_or_stream_activity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    isolated_home(monkeypatch, tmp_path)
+    _, capsule = make_project(tmp_path)
+    actual_uv = shutil.which("uv")
+    assert actual_uv is not None
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    fake_uv = fake_bin / "uv"
+    fake_uv.write_text(
+        "#!/bin/sh\nprintf '%s\\n' 'FAKE_UV_PROGRESS' >&2\n"
+        f"exec {shlex.quote(actual_uv)} \"$@\"\n",
+        encoding="utf-8",
+    )
+    fake_uv.chmod(0o755)
+    monkeypatch.setenv("PATH", str(fake_bin) + os.pathsep + os.environ["PATH"])
+    (capsule / "tool.py").write_text(
+        "Session.log_event('routine session event')\n"
+        "print('routine stderr output', file=__import__('sys').stderr)\n"
+        "raise ValueError('recognized tool failure')\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(CapsuleExecutionError):
+        run(capsule, log_level="error")
+    displayed = capsys.readouterr().err
+    assert "ValueError: recognized tool failure" in displayed
+    assert "routine session event" not in displayed
+    assert "routine stderr output" not in displayed
+    assert "FAKE_UV_PROGRESS" not in displayed
+    run_log = next((tmp_path / "home" / ".py_capsule" / "sample" / "runs").glob("*/run.log"))
+    persisted = run_log.read_text()
+    assert "routine session event" in persisted
+    assert "routine stderr output" in persisted
+    assert "FAKE_UV_PROGRESS" in persisted
+
+    (capsule / "tool.py").write_text("return True\n", encoding="utf-8")
+    run(capsule, log_level="debug")
+    assert "FAKE_UV_PROGRESS" in capsys.readouterr().err
 
 
 def test_explicit_project_selection_and_call_from_an_unrelated_directory(
