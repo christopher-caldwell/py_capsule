@@ -23,7 +23,7 @@ dependencies = ["py-capsule"]
 py-capsule = { path = "../py_capsule", editable = true }
 ```
 
-Run the wrapper with `uv run --project /path/to/wrapper-project wrapper.py`.
+Run the wrapper with `uv run --project /path/to/wrapper-project /path/to/wrapper-project/wrapper.py`.
 An existing wrapper environment can instead install the checkout with
 `uv pip install -e /path/to/py_capsule`. The snippet project does not need
 `py_capsule` as a dependency; it does need its own normal `pyproject.toml` and
@@ -71,7 +71,7 @@ The repository includes the supplied function-body shape, a project-owned
 and a local HTTP fixture. The helper and service are illustrative and do not
 claim to reproduce proprietary Decagon behavior.
 
-In one terminal, start the fixture:
+From the repository root, in one terminal, start the fixture:
 
 ```sh
 uv run --project examples/fixture-project \
@@ -91,6 +91,8 @@ cd /tmp
 The wrapper emits only the returned JSON value on stdout. Set `RECORD_ID` to
 choose another record; `RECORD_ID=error-case` demonstrates an ordinary
 business-error return. Set `PYCAPSULE_LOG_LEVEL=info` to mirror captured
-snippet output and `Session` events on stderr while preserving the JSON stdout.
+snippet output and `Session` events on stderr after the snippet finishes, while
+preserving the JSON stdout. `info` and `debug` do not stream live output while a
+snippet is running.
 The fixture URL defaults to `http://127.0.0.1:8765` and can be changed with
 `PY_CAPSULE_FIXTURE_URL`.

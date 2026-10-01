@@ -18,8 +18,6 @@ project = "../.."
 [inputs]
 record_id = "example-record"
 use_test_env = true
-
-[globals]
 variant = "default"
 
 [env]
@@ -98,9 +96,11 @@ snippet stdout/stderr and `uv` launcher output. `error` mirrors structured
 capsule failures or recognized `uv` error diagnostics; it does not mirror
 ordinary Session messages, unstructured snippet output, or `uv` progress just
 because they appeared on stderr. `info` mirrors snippet streams, Session events
-and execution failures to caller stderr. `debug` also mirrors `uv` launcher
-diagnostics. The caller stdout is not replaced. User wrapper prints and shell
-stream merging are outside this guarantee.
+and execution failures to caller stderr after the child process exits. `debug`
+also mirrors `uv` launcher diagnostics after execution. Neither level streams
+output while a snippet is running, so a still-running or hung snippet provides
+no live terminal progress. The caller stdout is not replaced. User wrapper
+prints and shell stream merging are outside this guarantee.
 
 Run directories use the shared capsule name namespace under
 `~/.py_capsule/<name>/runs/<unique-id>/`. Same-named capsules intentionally share
