@@ -558,6 +558,8 @@ def test_project_config_rejects_invalid_log_level(
     assert metadata["name"] == "sample"
     assert metadata["status"] == "failed"
     assert metadata["error_type"] == "CapsuleConfigError"
+    assert metadata["tool_path"] == str((capsule / "tool.py").resolve())
+    assert metadata["project_dir"] == str(project.resolve())
     assert "log_level" in (raised.value.run_dir / "run.log").read_text()
 
 
@@ -565,7 +567,7 @@ def test_capsule_config_rejects_invalid_log_level_with_run_evidence(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     isolated_home(monkeypatch, tmp_path)
-    _, capsule = make_project(tmp_path)
+    project, capsule = make_project(tmp_path)
     (capsule / "capsule.toml").write_text(
         'name = "sample"\ntool = "tool.py"\nlog_level = "trace"\n',
         encoding="utf-8",
@@ -579,6 +581,8 @@ def test_capsule_config_rejects_invalid_log_level_with_run_evidence(
     metadata = json.loads((raised.value.run_dir / "run.json").read_text())
     assert metadata["name"] == "sample"
     assert metadata["status"] == "failed"
+    assert metadata["tool_path"] == str((capsule / "tool.py").resolve())
+    assert metadata["project_dir"] == str(project.resolve())
     assert "log_level" in (raised.value.run_dir / "run.log").read_text()
 
 

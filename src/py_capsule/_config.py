@@ -32,11 +32,13 @@ class ConfigLayer:
     log_level: str | None
 
 
-@dataclass(frozen=True)
+@dataclass
 class CapsuleIdentity:
     name: str
     capsule_dir: Path
     manifest_path: Path
+    tool_path: Path | None = None
+    project_dir: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -195,9 +197,11 @@ def load_capsule(identity: CapsuleIdentity, data: Mapping[str, Any]) -> CapsuleC
     if not isinstance(tool, str) or not tool:
         raise CapsuleConfigError(f"{manifest}: tool must be a nonempty path string")
     tool_path = (capsule / tool).resolve()
+    identity.tool_path = tool_path
+    project_dir = _project_directory(capsule, data.get("project"), manifest)
+    identity.project_dir = project_dir
     if not tool_path.is_file():
         raise CapsuleConfigError(f"{manifest}: tool file does not exist: {tool_path}")
-    project_dir = _project_directory(capsule, data.get("project"), manifest)
 
     capsule_settings = _load_layer(data, manifest)
     project_file = project_dir / "pyproject.toml"

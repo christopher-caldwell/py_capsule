@@ -227,6 +227,8 @@ def _record(
     finished_at: str | None = None,
     error_type: str | None = None,
 ) -> None:
+    tool_path = config.tool_path if config is not None else identity.tool_path
+    project_dir = config.project_dir if config is not None else identity.project_dir
     _write_json(
         path,
         {
@@ -236,8 +238,8 @@ def _record(
             "started_at": started_at,
             "finished_at": finished_at,
             "capsule_dir": str(identity.capsule_dir),
-            "tool_path": str(config.tool_path) if config else None,
-            "project_dir": str(config.project_dir) if config else None,
+            "tool_path": str(tool_path) if tool_path is not None else None,
+            "project_dir": str(project_dir) if project_dir is not None else None,
             "error_type": error_type,
         },
     )
