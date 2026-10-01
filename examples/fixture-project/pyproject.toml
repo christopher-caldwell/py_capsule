@@ -1,0 +1,16 @@
+[project]
+name = "py-capsule-fetch-record-fixture"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = ["requests>=2.31,<3"]
+
+[tool.py_capsule]
+log_level = "none"
+
+[tool.py_capsule.inputs]
+use_test_env = true
+variant = "default"
+
+[tool.py_capsule.env]
+TEST_SERVICE_API_KEY = "PYCAPSULE_EXAMPLE_TEST_API_KEY"
+LIVE_SERVICE_API_KEY = "PYCAPSULE_EXAMPLE_LIVE_API_KEY"

@@ -19,15 +19,21 @@ class CapsuleConfigError(ValueError):
 
 
 @dataclass(frozen=True)
+class ConfigLayer:
+    inputs: dict[str, Any]
+    literal_globals: dict[str, Any]
+    env: dict[str, str]
+    log_level: str | None
+
+
+@dataclass(frozen=True)
 class CapsuleConfig:
     name: str
     capsule_dir: Path
     tool_path: Path
     project_dir: Path
-    inputs: dict[str, Any]
-    literal_globals: dict[str, Any]
-    env: dict[str, str]
-    configured_log_level: str | None
+    project_defaults: ConfigLayer
+    capsule_settings: ConfigLayer
 
 
 def _mapping(value: Any, label: str, source: Path) -> dict[str, Any]:
@@ -80,6 +86,51 @@ def _validate_injection_names(values: Mapping[str, Any], label: str, source: Pat
             )
 
 
+def _load_layer(data: Mapping[str, Any], source: Path) -> ConfigLayer:
+    inputs = _mapping(data.get("inputs", {}), "inputs", source)
+    literal_globals = _mapping(data.get("globals", {}), "globals", source)
+    env = _mapping(data.get("env", {}), "env", source)
+    _validate_injection_names(inputs, "inputs", source)
+    _validate_injection_names(literal_globals, "globals", source)
+    _validate_injection_names(env, "env", source)
+    duplicate_destinations = literal_globals.keys() & env.keys()
+    if duplicate_destinations:
+        duplicate = sorted(duplicate_destinations)[0]
+        raise CapsuleConfigError(
+            f"{source}: global {duplicate!r} is defined in both [globals] and [env]"
+        )
+    input_global_collisions = inputs.keys() & (literal_globals.keys() | env.keys())
+    if input_global_collisions:
+        collision = sorted(input_global_collisions)[0]
+        raise CapsuleConfigError(
+            f"{source}: injection name {collision!r} is defined in both [inputs] "
+            "and a global source ([globals] or [env])"
+        )
+    for key, value in inputs.items():
+        _validate_json_value(value, f"{source} [inputs].{key}")
+    for key, value in literal_globals.items():
+        _validate_json_value(value, f"{source} [globals].{key}")
+    for key, value in env.items():
+        if not isinstance(value, str) or not value:
+            raise CapsuleConfigError(
+                f"{source}: [env].{key} must name a nonempty environment variable"
+            )
+
+    log_level = data.get("log_level")
+    if "log_level" in data and (
+        not isinstance(log_level, str) or log_level not in _LOG_LEVELS
+    ):
+        raise CapsuleConfigError(
+            f"{source}: log_level must be one of {', '.join(sorted(_LOG_LEVELS))}"
+        )
+    return ConfigLayer(
+        inputs=dict(inputs),
+        literal_globals=dict(literal_globals),
+        env=dict(env),
+        log_level=log_level,
+    )
+
+
 def _project_directory(capsule_dir: Path, selection: Any, source: Path) -> Path:
     if selection is not None:
         if not isinstance(selection, str) or not selection:
@@ -128,49 +179,27 @@ def load_capsule(capsule_dir: str | Path) -> CapsuleConfig:
         raise CapsuleConfigError(f"{manifest}: tool file does not exist: {tool_path}")
     project_dir = _project_directory(capsule, data.get("project"), manifest)
 
-    inputs = _mapping(data.get("inputs", {}), "inputs", manifest)
-    literal_globals = _mapping(data.get("globals", {}), "globals", manifest)
-    env = _mapping(data.get("env", {}), "env", manifest)
-    _validate_injection_names(inputs, "inputs", manifest)
-    _validate_injection_names(literal_globals, "globals", manifest)
-    _validate_injection_names(env, "env", manifest)
-    duplicate_destinations = literal_globals.keys() & env.keys()
-    if duplicate_destinations:
-        duplicate = sorted(duplicate_destinations)[0]
-        raise CapsuleConfigError(
-            f"{manifest}: global {duplicate!r} is defined in both [globals] and [env]"
-        )
-    input_global_collisions = inputs.keys() & (literal_globals.keys() | env.keys())
-    if input_global_collisions:
-        collision = sorted(input_global_collisions)[0]
-        raise CapsuleConfigError(
-            f"{manifest}: injection name {collision!r} is defined in both [inputs] "
-            "and a global source ([globals] or [env])"
-        )
-    for key, value in inputs.items():
-        _validate_json_value(value, f"{manifest} [inputs].{key}")
-    for key, value in literal_globals.items():
-        _validate_json_value(value, f"{manifest} [globals].{key}")
-    for key, value in env.items():
-        if not isinstance(value, str) or not value:
-            raise CapsuleConfigError(
-                f"{manifest}: [env].{key} must name a nonempty environment variable"
-            )
-
-    log_level = data.get("log_level")
-    if log_level is not None and (not isinstance(log_level, str) or log_level not in _LOG_LEVELS):
-        raise CapsuleConfigError(
-            f"{manifest}: log_level must be one of {', '.join(sorted(_LOG_LEVELS))}"
-        )
+    capsule_settings = _load_layer(data, manifest)
+    project_file = project_dir / "pyproject.toml"
+    try:
+        with project_file.open("rb") as stream:
+            project_data = tomllib.load(stream)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise CapsuleConfigError(f"cannot read {project_file}: {exc}") from exc
+    tool_section = project_data.get("tool", {})
+    if not isinstance(tool_section, dict):
+        raise CapsuleConfigError(f"{project_file}: [tool] must be a TOML table")
+    py_capsule_section = tool_section.get("py_capsule", {})
+    if not isinstance(py_capsule_section, dict):
+        raise CapsuleConfigError(f"{project_file}: [tool.py_capsule] must be a TOML table")
+    project_defaults = _load_layer(py_capsule_section, project_file)
     return CapsuleConfig(
         name=name,
         capsule_dir=capsule,
         tool_path=tool_path,
         project_dir=project_dir,
-        inputs=dict(inputs),
-        literal_globals=dict(literal_globals),
-        env=dict(env),
-        configured_log_level=log_level,
+        project_defaults=project_defaults,
+        capsule_settings=capsule_settings,
     )
 
 
@@ -191,13 +220,46 @@ def validate_runtime_mapping(value: Mapping[str, Any] | None, label: str) -> dic
     return result
 
 
+def effective_inputs(config: CapsuleConfig, runtime: dict[str, Any]) -> dict[str, Any]:
+    values = dict(config.project_defaults.inputs)
+    values.update(config.capsule_settings.inputs)
+    values.update(runtime)
+    return values
+
+
+def effective_log_level(config: CapsuleConfig, runtime: str | None) -> str:
+    selected = (
+        runtime
+        if runtime is not None
+        else config.capsule_settings.log_level
+        if config.capsule_settings.log_level is not None
+        else config.project_defaults.log_level
+    )
+    selected = "none" if selected is None else selected
+    if not isinstance(selected, str) or selected not in _LOG_LEVELS:
+        raise CapsuleConfigError("log_level must be one of none, error, info, debug")
+    return selected
+
+
 def effective_globals(config: CapsuleConfig, runtime: dict[str, Any]) -> dict[str, Any]:
     # Select a source by destination before looking up environment values. An
     # overridden env reference therefore cannot fail because it is unset.
     selected: dict[str, tuple[str, Any]] = {
-        key: ("literal", value) for key, value in config.literal_globals.items()
+        key: ("literal", value)
+        for key, value in config.project_defaults.literal_globals.items()
     }
-    selected.update({key: ("env", value) for key, value in config.env.items()})
+    selected.update(
+        {key: ("env", value) for key, value in config.project_defaults.env.items()}
+    )
+    selected.update(
+        {
+            key: ("literal", value)
+            for key, value in config.capsule_settings.literal_globals.items()
+        }
+    )
+    selected.update(
+        {key: ("env", value) for key, value in config.capsule_settings.env.items()}
+    )
     selected.update({key: ("literal", value) for key, value in runtime.items()})
     resolved: dict[str, Any] = {}
     import os

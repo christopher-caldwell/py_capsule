@@ -1,0 +1,7 @@
+name = "fetch_record"
+tool = "./fetch_record.py"
+project = "../.."
+
+[inputs]
+record_id = "example-record"
+variant = "fixture"

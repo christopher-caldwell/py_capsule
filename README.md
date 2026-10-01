@@ -44,8 +44,6 @@ tool = "./fetch_record.py"
 
 [inputs]
 record_id = "example-record"
-
-[globals]
 use_test_env = true
 variant = "default"
 ```
@@ -63,5 +61,36 @@ result.print_json()
 only the returned JSON value there. Captured snippet output and `Session` events
 are retained under `~/.py_capsule/<name>/runs/<run-id>/`; the result exposes that
 directory as `result.run_dir`. See [docs/configuration.md](docs/configuration.md)
-for the manifest, project selection, environment globals, failure and logging
-details.
+for the manifest, project selection, layered defaults, environment globals,
+failure and logging details.
+
+## Run the controlled example
+
+The repository includes the supplied function-body shape, a project-owned
+`lib.helpers`, a `requests` target dependency, a separate wrapper environment,
+and a local HTTP fixture. The helper and service are illustrative and do not
+claim to reproduce proprietary Decagon behavior.
+
+In one terminal, start the fixture:
+
+```sh
+uv run --project examples/fixture-project \
+  examples/fixture-project/fixture_service.py
+```
+
+In another terminal, use fake fixture credentials and run the executable from
+any working directory:
+
+```sh
+export PYCAPSULE_EXAMPLE_TEST_API_KEY=fixture-test-key
+export PYCAPSULE_EXAMPLE_LIVE_API_KEY=fixture-live-key
+cd /tmp
+/path/to/py_capsule/examples/bin/fetch-record
+```
+
+The wrapper emits only the returned JSON value on stdout. Set `RECORD_ID` to
+choose another record; `RECORD_ID=error-case` demonstrates an ordinary
+business-error return. Set `PYCAPSULE_LOG_LEVEL=info` to mirror captured
+snippet output and `Session` events on stderr while preserving the JSON stdout.
+The fixture URL defaults to `http://127.0.0.1:8765` and can be changed with
+`PY_CAPSULE_FIXTURE_URL`.

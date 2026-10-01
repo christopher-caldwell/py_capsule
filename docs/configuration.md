@@ -29,11 +29,35 @@ TEST_SERVICE_API_KEY = "LOCAL_TEST_SERVICE_API_KEY"
 `inputs` become function parameters. `globals` and `env` supply Python globals;
 `env` maps an injected name to the name of a variable in the host process. The
 runner resolves only the winning environment mapping and never copies the whole
-host environment. One manifest cannot define a global destination in both
-`[globals]` and `[env]`. Input names cannot also be defined as global names in
-the same manifest, and the final effective input/global namespaces cannot
+host environment. Shared defaults can live in the selected project's
+`pyproject.toml`:
+
+```toml
+[tool.py_capsule]
+log_level = "none"
+
+[tool.py_capsule.inputs]
+use_test_env = true
+variant = "default"
+
+[tool.py_capsule.env]
+TEST_SERVICE_API_KEY = "LOCAL_TEST_SERVICE_API_KEY"
+```
+
+The full precedence is runtime > capsule > selected project > built-in defaults.
+Each mapping merges by name, and nested payloads replace lower-layer values as
+a whole. Runtime presence wins for `false`, `0`, `""`, empty containers and
+`null`. Inputs and globals merge independently, then are checked for a final
+name collision. A literal global and an environment-backed global compete for
+the same destination; the higher layer wins before environment lookup, so an
+overridden missing lower-layer variable is harmless. Every layer is validated
+on its own before merging. One config file cannot define a global destination
+in both `[globals]` and `[env]`. Input names cannot also be defined as global
+names in the same file, and the final effective input/global namespaces cannot
 overlap. The global name `__py_capsule_execute__` is reserved for the runner.
-Duplicate TOML keys are rejected by the TOML parser.
+Duplicate TOML keys are rejected by the TOML parser. Project defaults come only
+from the selected project and are not recursively inherited from its parent
+projects; the `[tool.py_capsule]` section is optional.
 
 Runtime mappings passed to `run(capsule_dir, inputs=..., globals=...,
 log_level=...)` replace configured values by name, including `False`, `0`, empty
@@ -95,5 +119,26 @@ for the snippet. `uv` handles that project's ordinary environment and lock
 behavior. py_capsule requires `uv` on `PATH` and has no plain-Python fallback.
 
 For a Control Tower executable, anchor the capsule to the wrapper file or use
-the stage's `CONTROL_TOWER_WORKSPACE` explicitly. The library does not integrate
-with Control Tower or interpret stdout as workflow state.
+the stage's `CONTROL_TOWER_WORKSPACE` explicitly:
+
+```python
+import os
+from pathlib import Path
+from py_capsule import run
+
+workspace = Path(os.environ["CONTROL_TOWER_WORKSPACE"])
+result = run(workspace / "capsules" / "fetch_record")
+result.print_json()
+```
+
+The library does not integrate with Control Tower or interpret stdout as
+workflow state.
+
+The repository example uses a separate wrapper project with a local editable
+dependency on this checkout. It does not assume a public package release or
+that installing a uv tool makes the library importable in every environment.
+Its shell entry point finds the checkout path before invoking `uv`, and its
+Python wrapper anchors the capsule relative to `__file__`. A caller-owned
+Control Tower stage can use the same pattern and explicitly locate its
+workspace. Printed JSON is captured stdout; Control Tower does not automatically
+make it shared next-stage state.

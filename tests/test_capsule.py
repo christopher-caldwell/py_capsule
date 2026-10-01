@@ -1,15 +1,21 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
-import importlib.util
-import shutil
 import shlex
+import shutil
+import subprocess
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
 
 from py_capsule import CapsuleConfigError, CapsuleExecutionError, run
+
+
+REPOSITORY = Path(__file__).resolve().parents[1]
 
 
 def make_project(tmp_path: Path, *, name: str = "fixture") -> tuple[Path, Path]:
@@ -400,3 +406,292 @@ def test_missing_effective_env_variable_fails_before_snippet(tmp_path: Path, mon
     with pytest.raises(CapsuleExecutionError, match="UNSET_CAPSULE_TOKEN") as raised:
         run(capsule)
     assert json.loads((raised.value.run_dir / "run.json").read_text())["status"] == "failed"
+
+
+def test_project_capsule_and_runtime_values_merge_by_name_and_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    isolated_home(monkeypatch, tmp_path)
+    project, capsule = make_project(tmp_path)
+    (project / "pyproject.toml").write_text(
+        '[project]\nname = "fixture-project"\nversion = "0.0.1"\n'
+        '[tool.py_capsule.inputs]\n'
+        'flag = true\ncount = 3\nempty = "project"\nnothing = "project"\n'
+        'payload = { project = true, retained = "lower" }\n'
+        'project_only = "inherited"\n'
+        '[tool.py_capsule.globals]\n'
+        'FROM_PROJECT = "project literal"\n'
+        'CHANGE_TO_ENV = "project literal"\n'
+        '[tool.py_capsule.env]\n'
+        'FROM_PROJECT_ENV = "PROJECT_CAPSULE_ENV_VALUE"\n'
+        'CHANGE_TO_LITERAL = "UNSET_LOWER_PROJECT_ENV"\n'
+        'RUNTIME_SOURCE = "UNSET_RUNTIME_SOURCE_ENV"\n',
+        encoding="utf-8",
+    )
+    (capsule / "capsule.toml").write_text(
+        'name = "sample"\ntool = "tool.py"\n'
+        '[inputs]\ncount = 5\npayload = { capsule = true }\n'
+        'capsule_only = "capsule value"\n'
+        '[globals]\nCHANGE_TO_LITERAL = "capsule literal"\n'
+        '[env]\nCHANGE_TO_ENV = "CAPSULE_ENV_VALUE"\n',
+        encoding="utf-8",
+    )
+    (capsule / "tool.py").write_text(
+        "return {"
+        "'flag': flag, 'count': count, 'empty': empty, 'nothing': nothing, "
+        "'payload': payload, 'project_only': project_only, "
+        "'capsule_only': capsule_only, 'from_project': FROM_PROJECT, "
+        "'from_project_env': FROM_PROJECT_ENV, 'change_to_env': CHANGE_TO_ENV, "
+        "'change_to_literal': CHANGE_TO_LITERAL, 'runtime_source': RUNTIME_SOURCE"
+        "}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PROJECT_CAPSULE_ENV_VALUE", "project env value")
+    monkeypatch.setenv("CAPSULE_ENV_VALUE", "capsule env value")
+    monkeypatch.delenv("UNSET_LOWER_PROJECT_ENV", raising=False)
+    monkeypatch.delenv("UNSET_RUNTIME_SOURCE_ENV", raising=False)
+
+    result = run(
+        capsule,
+        inputs={
+            "flag": False,
+            "count": 0,
+            "empty": "",
+            "nothing": None,
+            "payload": {"runtime": True},
+        },
+        globals={"FROM_PROJECT": "runtime literal", "RUNTIME_SOURCE": "runtime value"},
+    )
+
+    assert result.value == {
+        "flag": False,
+        "count": 0,
+        "empty": "",
+        "nothing": None,
+        "payload": {"runtime": True},
+        "project_only": "inherited",
+        "capsule_only": "capsule value",
+        "from_project": "runtime literal",
+        "from_project_env": "project env value",
+        "change_to_env": "capsule env value",
+        "change_to_literal": "capsule literal",
+        "runtime_source": "runtime value",
+    }
+    capsule_defaults = run(capsule, globals={"RUNTIME_SOURCE": "runtime value"})
+    assert capsule_defaults.value["count"] == 5
+    assert capsule_defaults.value["payload"] == {"capsule": True}
+
+
+def test_project_layer_same_file_duplicates_fail_before_higher_layer_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    isolated_home(monkeypatch, tmp_path)
+    project, capsule = make_project(tmp_path)
+    (project / "pyproject.toml").write_text(
+        '[project]\nname = "fixture-project"\nversion = "0.0.1"\n'
+        '[tool.py_capsule.inputs]\nshared = "project input"\n'
+        '[tool.py_capsule.globals]\nshared = "project global"\n',
+        encoding="utf-8",
+    )
+    (capsule / "capsule.toml").write_text(
+        'name = "sample"\ntool = "tool.py"\n[inputs]\nshared = "capsule override"\n',
+        encoding="utf-8",
+    )
+    (capsule / "tool.py").write_text("return shared\n", encoding="utf-8")
+    with pytest.raises(CapsuleConfigError, match="both \\[inputs\\].*global source") as raised:
+        run(capsule)
+    assert str(project / "pyproject.toml") in str(raised.value)
+
+
+def test_project_capsule_and_runtime_log_level_precedence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    isolated_home(monkeypatch, tmp_path)
+    project, capsule = make_project(tmp_path)
+    (project / "pyproject.toml").write_text(
+        '[project]\nname = "fixture-project"\nversion = "0.0.1"\n'
+        '[tool.py_capsule]\nlog_level = "info"\n',
+        encoding="utf-8",
+    )
+    (capsule / "tool.py").write_text(
+        "Session.log_event('visible at info')\nreturn True\n", encoding="utf-8"
+    )
+    run(capsule)
+    assert "visible at info" in capsys.readouterr().err
+
+    manifest = (capsule / "capsule.toml").read_text()
+    (capsule / "capsule.toml").write_text(
+        manifest.replace("[inputs]", 'log_level = "error"\n[inputs]'), encoding="utf-8"
+    )
+    run(capsule)
+    assert capsys.readouterr().err == ""
+    run(capsule, log_level="info")
+    assert "visible at info" in capsys.readouterr().err
+
+    with pytest.raises(CapsuleConfigError, match="log_level"):
+        run(capsule, log_level="trace")
+
+
+def test_project_config_rejects_invalid_log_level(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    isolated_home(monkeypatch, tmp_path)
+    project, capsule = make_project(tmp_path)
+    (project / "pyproject.toml").write_text(
+        '[project]\nname = "fixture-project"\nversion = "0.0.1"\n'
+        '[tool.py_capsule]\nlog_level = "trace"\n',
+        encoding="utf-8",
+    )
+    (capsule / "tool.py").write_text("return True\n", encoding="utf-8")
+    with pytest.raises(CapsuleConfigError, match="log_level"):
+        run(capsule)
+
+
+def test_documented_wrapper_executes_example_shape_against_local_http_fixture(
+    tmp_path: Path,
+) -> None:
+    received: list[dict[str, object]] = []
+
+    class FixtureHandler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            received.append(
+                {
+                    "path": self.path,
+                    "authorization": self.headers.get("Authorization"),
+                    "body": body,
+                }
+            )
+            if body.get("record_id") == "error-case":
+                reply = {"success": False, "error": {"message": "fixture business error"}}
+            elif body.get("record_id") == "exception-case":
+                reply = {"success": True}
+            else:
+                reply = {
+                    "success": True,
+                    "data": {"record_id": body["record_id"], "source": "fixture"},
+                }
+            encoded = json.dumps(reply).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
+        def log_message(self, format: str, *args: object) -> None:
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), FixtureHandler)
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    try:
+        env = os.environ.copy()
+        env.update(
+            {
+                "HOME": str(tmp_path / "home"),
+                "PYCAPSULE_EXAMPLE_TEST_API_KEY": "fixture-test-key",
+                "PYCAPSULE_EXAMPLE_LIVE_API_KEY": "fixture-live-key",
+                "PY_CAPSULE_FIXTURE_URL": f"http://127.0.0.1:{server.server_port}",
+                "RECORD_ID": "runtime-record",
+            }
+        )
+        missing_secret_env = dict(env)
+        del missing_secret_env["PYCAPSULE_EXAMPLE_TEST_API_KEY"]
+        missing_secret = subprocess.run(
+            [str(REPOSITORY / "examples/bin/fetch-record")],
+            cwd=tmp_path,
+            env=missing_secret_env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+        assert missing_secret.returncode != 0
+        assert "PYCAPSULE_EXAMPLE_TEST_API_KEY" in missing_secret.stderr
+        assert received == []
+
+        completed = subprocess.run(
+            [str(REPOSITORY / "examples/bin/fetch-record")],
+            cwd=tmp_path,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+        assert completed.returncode == 0, completed.stderr
+        assert json.loads(completed.stdout) == {
+            "record_id": "runtime-record",
+            "source": "fixture",
+        }
+        assert received == [
+            {
+                "path": "/v1/hooks/inbound",
+                "authorization": "Bearer fixture-test-key",
+                "body": {"event": "FETCH_RECORD", "record_id": "runtime-record"},
+            }
+        ]
+
+        env["RECORD_ID"] = "error-case"
+        env["PYCAPSULE_LOG_LEVEL"] = "info"
+        failed_business_call = subprocess.run(
+            [str(REPOSITORY / "examples/bin/fetch-record")],
+            cwd=tmp_path,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+        assert failed_business_call.returncode == 0, failed_business_call.stderr
+        assert json.loads(failed_business_call.stdout) == "Something went wrong"
+        assert failed_business_call.stdout == '"Something went wrong"\n'
+        assert "fixture business error" in failed_business_call.stderr
+        assert len(received) == 2
+
+        env["RECORD_ID"] = "exception-case"
+        execution_failure = subprocess.run(
+            [str(REPOSITORY / "examples/bin/fetch-record")],
+            cwd=tmp_path,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+        assert execution_failure.returncode != 0
+        assert execution_failure.stdout == ""
+        assert "run evidence" in execution_failure.stderr
+        assert len(received) == 3
+
+        runs = list((tmp_path / "home/.py_capsule/fetch_record/runs").iterdir())
+        assert len(runs) == 4
+        error_run_log = next(
+            run_dir / "run.log"
+            for run_dir in runs
+            if "fixture business error" in (run_dir / "run.log").read_text()
+        )
+        persisted = error_run_log.read_text()
+        assert "fixture business error" in persisted
+        assert any(
+            (run_dir / "result.json").is_file()
+            and json.loads((run_dir / "result.json").read_text()) == "Something went wrong"
+            for run_dir in runs
+        )
+        execution_failure_record = next(
+            run_dir / "run.json"
+            for run_dir in runs
+            if json.loads((run_dir / "run.json").read_text())["status"] == "failed"
+            and "KeyError" in (run_dir / "run.log").read_text()
+        )
+        assert json.loads(execution_failure_record.read_text())["status"] == "failed"
+    finally:
+        server.shutdown()
+        server.server_close()
+        server_thread.join(timeout=5)

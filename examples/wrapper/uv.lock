@@ -1,0 +1,24 @@
+version = 1
+revision = 3
+requires-python = ">=3.11"
+
+[[package]]
+name = "py-capsule"
+version = "0.1.0"
+source = { editable = "../../" }
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=8" }]
+
+[[package]]
+name = "py-capsule-example-wrapper"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "py-capsule" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "py-capsule", editable = "../../" }]

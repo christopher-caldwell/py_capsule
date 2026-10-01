@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
+exec uv run --project "$REPO_ROOT/examples/wrapper" -- \
+  "$REPO_ROOT/examples/wrapper/fetch_record.py"

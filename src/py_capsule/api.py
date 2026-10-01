@@ -16,6 +16,8 @@ from ._config import (
     CapsuleConfigError,
     _validate_json_value,
     effective_globals,
+    effective_inputs,
+    effective_log_level,
     load_capsule,
     validate_runtime_mapping,
 )
@@ -116,7 +118,9 @@ def _failure_detail(
     returncode: int,
 ) -> str:
     if error is not None:
-        return error["message"] or error["traceback"] or "capsule execution failed"
+        if error["message"]:
+            return f"{error['type']}: {error['message']}"
+        return error["traceback"] or "capsule execution failed"
     recognized = _recognized_uv_errors(runner_stdout, runner_stderr)
     return recognized or f"uv child exited with status {returncode}"
 
@@ -243,32 +247,28 @@ def run(
 ) -> CapsuleResult:
     """Execute ``capsule.toml``'s function-body tool in its selected uv project.
 
-    Runtime inputs and globals replace capsule values by key. Values transferred
-    to the child must be JSON-compatible. See README.md for manifest details.
+    Project defaults, capsule values and runtime overrides are merged by key in
+    that order. Values transferred to the child must be JSON-compatible. See
+    README.md for manifest details.
     """
     config = load_capsule(capsule_dir)
     runtime_inputs = validate_runtime_mapping(inputs, "inputs")
     runtime_globals = validate_runtime_mapping(globals, "globals")
-    selected_level = log_level if log_level is not None else config.configured_log_level
-    selected_level = selected_level if selected_level is not None else "none"
-    if not isinstance(selected_level, str) or selected_level not in {
-        "none",
-        "error",
-        "info",
-        "debug",
-    }:
-        raise CapsuleConfigError("log_level must be one of none, error, info, debug")
+    selected_level = effective_log_level(config, log_level)
 
-    effective_inputs = dict(config.inputs)
-    effective_inputs.update(runtime_inputs)
-    for name, value in effective_inputs.items():
+    final_inputs = effective_inputs(config, runtime_inputs)
+    for name, value in final_inputs.items():
         if not isinstance(name, str) or not name.isidentifier():
             raise CapsuleConfigError(f"input name {name!r} must be a Python identifier")
         _validate_json_value(value, f"inputs.{name}")
     effective_global_names = (
-        set(config.literal_globals) | set(config.env) | set(runtime_globals)
+        set(config.project_defaults.literal_globals)
+        | set(config.project_defaults.env)
+        | set(config.capsule_settings.literal_globals)
+        | set(config.capsule_settings.env)
+        | set(runtime_globals)
     )
-    collisions = set(effective_inputs) & effective_global_names
+    collisions = set(final_inputs) & effective_global_names
     if collisions:
         collision = sorted(collisions)[0]
         raise CapsuleConfigError(
@@ -307,7 +307,7 @@ def run(
         request = {
             "project_dir": str(config.project_dir),
             "tool_path": str(config.tool_path),
-            "inputs": effective_inputs,
+            "inputs": final_inputs,
             "globals": resolved_globals,
         }
         uv = shutil.which("uv")
