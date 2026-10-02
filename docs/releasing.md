@@ -12,8 +12,9 @@ The first public release candidate is `py-capsule 0.1.0`.
 Public publication is intentionally blocked until both of these owner decisions
 are resolved:
 
-1. Choose the project license, commit the license text, and declare the license
-   in `[project]` metadata. Do not publish until this is explicit.
+1. Choose the project license, commit the license text, and declare both the
+   SPDX license expression and `license-files` in `[project]` metadata. Do
+   not publish until this is explicit.
 2. Confirm that public PyPI publication is intended. This GitHub repository is
    private, but wheel and source-distribution contents uploaded to public PyPI
    are public regardless of repository visibility.
@@ -58,8 +59,8 @@ No PyPI API token is needed.
    versioned dependency.
 
 The workflow refuses a release tag that does not match `project.version`, and
-it refuses public publication while license metadata or a root license file is
-missing.
+it refuses public publication while the SPDX license expression,
+`license-files` metadata, or a root license file is missing.
 
 ## What the workflow validates
 
