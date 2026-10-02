@@ -1,0 +1,12 @@
+name = "handoff_specialist"
+tool = "./handoff_specialist.py"
+project = "../.."
+
+[inputs]
+contact_phone_number = "+15550001111"
+contact_name = "Morgan Fixture"
+summary_text = "Requests a specialist callback."
+goals = ["schedule consultation"]
+involvement_level = "high"
+status_note = "Caller confirmed details."
+is_away = false

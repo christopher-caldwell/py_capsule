@@ -26,9 +26,10 @@ TEST_SERVICE_API_KEY = "LOCAL_TEST_SERVICE_API_KEY"
 
 `inputs` become function parameters. `globals` and `env` supply Python globals;
 `env` maps an injected name to the name of a variable in the host process. The
-runner resolves only the winning environment mapping and never copies the whole
-host environment. Shared defaults can live in the selected project's
-`pyproject.toml`:
+runner resolves only the winning `[env]` mapping when deciding which values to
+inject as Python globals. This is not process-environment isolation: the `uv`
+child otherwise inherits the caller's ordinary subprocess environment. Shared
+defaults can live in the selected project's `pyproject.toml`:
 
 ```toml
 [tool.py_capsule]
@@ -42,11 +43,11 @@ variant = "default"
 TEST_SERVICE_API_KEY = "LOCAL_TEST_SERVICE_API_KEY"
 ```
 
-The full precedence is runtime > capsule > selected project > built-in defaults.
-Each mapping merges by name, and nested payloads replace lower-layer values as
-a whole. Runtime presence wins for `false`, `0`, `""`, empty containers and
-`null`. Inputs and globals merge independently, then are checked for a final
-name collision. A literal global and an environment-backed global compete for
+The full precedence for configured inputs/globals is call-time override >
+capsule > selected project > built-in defaults. Each mapping merges by name,
+and nested payloads replace lower-layer values as a whole. Call-time presence
+wins for `false`, `0`, `""`, empty containers and `null`. Inputs and globals
+merge independently, then are checked for a final name collision. A literal global and an environment-backed global compete for
 the same destination; the higher layer wins before environment lookup, so an
 overridden missing lower-layer variable is harmless. Every layer is validated
 on its own before merging. One config file cannot define a global destination
@@ -57,46 +58,88 @@ Duplicate TOML keys are rejected by the TOML parser. Project defaults come only
 from the selected project and are not recursively inherited from its parent
 projects; the `[tool.py_capsule]` section is optional.
 
-Runtime mappings passed to `run(capsule_dir, inputs=..., globals=...,
-log_level=...)` replace configured values by name, including `False`, `0`, empty
-strings, empty containers and `None`. A replaced environment reference is not
+Call-time `inputs=` and `globals=` passed to
+`run(capsule_dir, inputs=..., globals=..., log_level=...)` replace configured
+values by name, including `False`, `0`, empty strings, empty containers and
+`None`. A replaced environment reference is not
 looked up. Values crossing into the target process must be JSON-compatible:
 strings, booleans, finite numbers, `None`, lists and dictionaries with string
-keys. No arbitrary Python objects are transferred.
+keys. No arbitrary Python objects are transferred from the caller process.
 
-The built-in `Session` provides only `Session.log_event(message)`. Supplying a
-global named `Session` replaces this fallback. This is a local compatibility
-shim, not full Decagon runtime emulation.
+Pass `runtime="module:attribute"` and optional `runtime_context={...}` to
+construct child-local live globals. The selected project's import root is added
+in the child, so callers do not need to calculate it or edit `sys.path`. The
+reference can also be an importable class or function object; PyCapsule converts
+it to its module and qualified name and resolves it in the child. Both forms
+require that module and its dependencies to be available in the target project.
+The callable form does not transfer code, parent mutations, or wrapper import
+paths. Use a target-owned module or a declared target dependency, including a
+local uv path dependency for a shared adapter package. The string form avoids
+having to import target-only dependencies in the wrapper. PyCapsule does not
+automatically expose the wrapper source tree or environment to child imports.
+
+The factory receives one JSON-compatible context value as its sole positional
+argument: an object with string keys, list, string, finite number, boolean, or
+JSON null. Omission passes a fresh `{}` for compatibility; explicit
+`runtime_context=None` passes JSON null. Context is validated and transported
+as one value, never merged into inputs/globals; the factory defines its schema.
+Top-level Mapping implementations are also accepted as JSON objects. The factory
+returns an object with synchronous `globals()` and `export()` methods.
+`globals()` must return a mapping of valid Python names to live objects.
+Runtime globals cannot collide with capsule inputs or JSON globals. PyCapsule
+supplies no host-specific names such as `Session` or `Conversation`.
+
+Tool bodies use runtime-provided names directly and do not import them. A tool
+that calls `Session.set_value(...)` or `Conversation.set_metadata(...)` works
+when the selected runtime provides those names. If it does not, ordinary Python
+name resolution fails; PyCapsule does not synthesize missing host APIs.
+
+Each call constructs a fresh runtime. Its `export()` result must be JSON
+compatible and is available as `CapsuleResult.runtime_export`; it is also
+persisted separately as `runtime-export.json`, not copied into `run.json`.
+After a normal Python execution failure, the runner still attempts export and
+exposes a successful value as `CapsuleExecutionError.runtime_export`. If both
+the capsule and export fail, the capsule failure remains primary and the
+secondary export failure is retained in the exception and run log.
+`has_runtime_export` distinguishes a successful JSON-null export from absent
+output. Failure-side export requires a caught Python failure and a working
+exporter; hard process termination cannot guarantee a final snapshot. Runtime
+exports, returns, logs, and error messages may contain sensitive data; context
+is not persisted as a separate artifact and runtime export is deliberately
+retained.
 
 ## Results, logs and errors
 
-`run()` returns a `CapsuleResult` with `value` and `run_dir`. It does not print
-the return value. `result.print_json()` writes one strict JSON value and a
+`run()` returns a `CapsuleResult` with `value`, `run_dir`,
+`runtime_export`, and `has_runtime_export`. Without a runtime,
+`runtime_export` is `None` and `has_runtime_export` is false. It does not
+print the return value. `result.print_json()` writes one strict JSON value and a
 newline to caller stdout; a returned string remains a JSON string. Unsupported
 return values, including non-finite floats, fail clearly. Return validation
 rejects unsupported shapes before writing `result.json`; object keys must
 already be strings and are never coerced.
 
-Snippet stdout/stderr, `Session.log_event` records and `uv` diagnostics are
-captured in `run.log`. Each run also has a `run.json` provenance record; a
-successful JSON-compatible return is in `result.json`. Ordinary execution
-failures raise `CapsuleExecutionError`, whose `run_dir` points to the retained
-evidence. Before a valid capsule name can be read, manifest failures raise
-`CapsuleConfigError` without creating a run. After the name is known, manifest,
-runtime mapping and merge validation failures create a failed run with
+Snippet stdout/stderr and `uv` diagnostics are captured in `run.log`. Each run
+also has a `run.json` provenance record; a successful JSON-compatible return is
+in `result.json`. Ordinary execution failures raise `CapsuleExecutionError`, whose `run_dir`
+points to the retained evidence. Before a valid capsule name can be read,
+manifest failures raise `CapsuleConfigError` without creating a run. After the name is known, manifest,
+call-time mapping and merge validation failures create a failed run with
 diagnostics and raise `CapsuleConfigError` with `run_dir` set to that evidence.
 Missing effective environment values and child execution failures raise
-`CapsuleExecutionError`, also with `run_dir`. A returned error-shaped business
-value remains an ordinary successful value.
+`CapsuleExecutionError`, also with `run_dir`. Runtime-backed execution errors
+also expose `runtime_export` and `has_runtime_export`; when export itself fails
+after an earlier capsule failure, `runtime_export_error` retains that secondary
+failure and the capsule failure remains primary. `phase` identifies the child
+execution stage when available. A returned error-shaped business value remains
+an ordinary successful value.
 
 Log levels are `none`, `error`, `info` and `debug`; the default is `none`.
 Retention is independent of terminal display. `none` never mirrors logs.
-`Session.log_event` records are classified as info events, separately from
-snippet stdout/stderr and `uv` launcher output. `error` mirrors structured
-capsule failures or recognized `uv` error diagnostics; it does not mirror
-ordinary Session messages, unstructured snippet output, or `uv` progress just
-because they appeared on stderr. `info` mirrors snippet streams, Session events
-and execution failures to caller stderr after the child process exits. `debug`
+`error` mirrors structured capsule failures or recognized `uv` error
+diagnostics; it does not mirror unstructured snippet output or `uv` progress
+just because they appeared on stderr. `info` mirrors snippet streams and
+execution failures to caller stderr after the child process exits. `debug`
 also mirrors `uv` launcher diagnostics after execution. Neither level streams
 output while a snippet is running, so a still-running or hung snippet provides
 no live terminal progress. The caller stdout is not replaced. User wrapper

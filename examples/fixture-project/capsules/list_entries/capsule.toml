@@ -1,0 +1,7 @@
+name = "list_entries"
+tool = "./list_entries.py"
+project = "../.."
+
+[inputs]
+record_id = "canonical-record-303"
+lapsed = false

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import inspect
 import json
+import keyword
 import os
 import re
 import shutil
@@ -10,7 +12,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, TextIO
+from typing import Any, Callable, Mapping, TextIO
 
 from ._config import (
     CapsuleConfigError,
@@ -26,12 +28,29 @@ from ._config import (
 )
 
 
+_DEFAULT_RUNTIME_CONTEXT = object()
+
+
 class CapsuleExecutionError(RuntimeError):
     """A capsule could not be executed; ``run_dir`` points to retained evidence."""
 
-    def __init__(self, message: str, run_dir: Path, *, cause: BaseException | None = None):
+    def __init__(
+        self,
+        message: str,
+        run_dir: Path,
+        *,
+        cause: BaseException | None = None,
+        runtime_export: Any = None,
+        has_runtime_export: bool = False,
+        runtime_export_error: dict[str, str] | None = None,
+        phase: str | None = None,
+    ):
         self.run_dir = run_dir
         self.cause = cause
+        self.runtime_export = runtime_export
+        self.has_runtime_export = has_runtime_export
+        self.runtime_export_error = runtime_export_error
+        self.phase = phase
         super().__init__(f"{message} (run evidence: {run_dir})")
 
 
@@ -41,6 +60,8 @@ class CapsuleResult:
 
     value: Any
     run_dir: Path
+    runtime_export: Any = None
+    has_runtime_export: bool = False
 
     def print_json(self, file: TextIO | None = None) -> None:
         """Write only the return value as one strict JSON value and a newline."""
@@ -70,26 +91,7 @@ def _read_capture(path: Path) -> str:
         return ""
 
 
-def _read_events(path: Path) -> list[dict[str, str]]:
-    events: list[dict[str, str]] = []
-    for line in _read_capture(path).splitlines():
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            events.append({"level": "info", "source": "Session.log_event", "message": line})
-            continue
-        if isinstance(event, dict):
-            events.append(
-                {
-                    "level": str(event.get("level", "info")),
-                    "source": str(event.get("source", "Session.log_event")),
-                    "message": str(event.get("message", "")),
-                }
-            )
-    return events
-
-
-def _read_error(path: Path) -> dict[str, str] | None:
+def _read_error(path: Path) -> dict[str, Any] | None:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (FileNotFoundError, OSError, json.JSONDecodeError):
@@ -100,6 +102,8 @@ def _read_error(path: Path) -> dict[str, str] | None:
         "type": str(value.get("type", "CapsuleExecutionError")),
         "message": str(value.get("message", "capsule execution failed")),
         "traceback": str(value.get("traceback", "")),
+        "phase": str(value.get("phase", "capsule_execution")),
+        "runtime_export_error": value.get("runtime_export_error"),
     }
 
 
@@ -115,14 +119,32 @@ def _recognized_uv_errors(stdout: str, stderr: str) -> str:
 
 
 def _failure_detail(
-    error: dict[str, str] | None,
+    error: dict[str, Any] | None,
     runner_stdout: str,
     runner_stderr: str,
     returncode: int,
 ) -> str:
     if error is not None:
+        phase = error.get("phase")
+        prefix = {
+            "runtime_import": "runtime import failed",
+            "runtime_resolve": "runtime reference resolution failed",
+            "runtime_construct": "runtime construction failed",
+            "runtime_globals": "runtime globals failed",
+            "runtime_export": "runtime export failed",
+        }.get(phase)
+        message = error["message"]
+        if prefix:
+            message = f"{prefix}: {message}"
+        export_error = error.get("runtime_export_error")
+        if isinstance(export_error, dict):
+            message += (
+                "; runtime export also failed: "
+                f"{export_error.get('type', 'Exception')}: "
+                f"{export_error.get('message', '')}"
+            )
         if error["message"]:
-            return f"{error['type']}: {error['message']}"
+            return f"{error['type']}: {message}"
         return error["traceback"] or "capsule execution failed"
     recognized = _recognized_uv_errors(runner_stdout, runner_stderr)
     return recognized or f"uv child exited with status {returncode}"
@@ -144,8 +166,8 @@ def _append_log(
     runner_stderr: str = "",
     snippet_stdout: str = "",
     snippet_stderr: str = "",
-    events: list[dict[str, str]] | None = None,
     error_detail: str = "",
+    runtime_export_error: dict[str, str] | None = None,
     runner_failure: str = "",
 ) -> None:
     with path.open("a", encoding="utf-8") as stream:
@@ -153,13 +175,14 @@ def _append_log(
         _append_section(stream, "uv stderr", runner_stderr)
         _append_section(stream, "snippet stdout", snippet_stdout)
         _append_section(stream, "snippet stderr", snippet_stderr)
-        if events:
-            stream.write("=== Session.log_event (info) ===\n")
-            for event in events:
-                stream.write(event["message"])
-                if not event["message"].endswith("\n"):
-                    stream.write("\n")
         _append_section(stream, "capsule execution error", error_detail)
+        if runtime_export_error:
+            detail = (
+                f"{runtime_export_error.get('type', 'Exception')}: "
+                f"{runtime_export_error.get('message', '')}\n"
+                f"{runtime_export_error.get('traceback', '')}"
+            )
+            _append_section(stream, "runtime export error", detail)
         _append_section(stream, "uv execution error", runner_failure)
 
 
@@ -178,7 +201,6 @@ def _mirror_logs(
     runner_stderr: str = "",
     snippet_stdout: str = "",
     snippet_stderr: str = "",
-    events: list[dict[str, str]] | None = None,
     error_detail: str = "",
     runner_failure: str = "",
 ) -> None:
@@ -191,12 +213,6 @@ def _mirror_logs(
 
     _write_terminal(sys.stderr, "stdout", snippet_stdout)
     _write_terminal(sys.stderr, "stderr", snippet_stderr)
-    for event in events or []:
-        _write_terminal(
-            sys.stderr,
-            f"{event['level']} {event['source']}",
-            event["message"],
-        )
     _write_terminal(sys.stderr, "error", error_detail or runner_failure)
     if level == "debug":
         _write_terminal(sys.stderr, "uv stdout", runner_stdout)
@@ -245,17 +261,58 @@ def _record(
     )
 
 
+def _runtime_reference(runtime: str | type | Callable[..., Any] | None) -> str | None:
+    if runtime is None:
+        return None
+    if isinstance(runtime, str):
+        reference = runtime
+    elif inspect.isclass(runtime) or inspect.isfunction(runtime):
+        module = getattr(runtime, "__module__", "")
+        qualified_name = getattr(runtime, "__qualname__", "")
+        if (
+            not module
+            or module == "__main__"
+            or not qualified_name
+            or "<locals>" in qualified_name
+        ):
+            raise CapsuleConfigError(
+                "runtime must be an importable class/function or a 'module:attribute' reference"
+            )
+        reference = f"{module}:{qualified_name}"
+    else:
+        raise CapsuleConfigError(
+            "runtime must be an importable class/function or a 'module:attribute' reference"
+        )
+    if reference.count(":") != 1:
+        raise CapsuleConfigError("runtime reference must use the 'module:attribute' form")
+    module, attribute = reference.split(":", 1)
+    parts = module.split(".") + attribute.split(".")
+    if module == "__main__" or not module or not attribute or any(
+        not part.isidentifier() or keyword.iskeyword(part) for part in parts
+    ):
+        raise CapsuleConfigError("runtime reference must use the 'module:attribute' form")
+    return reference
+
+
 def run(
     capsule_dir: str | Path,
     inputs: Mapping[str, Any] | None = None,
     globals: Mapping[str, Any] | None = None,
     log_level: str | None = None,
+    runtime: str | type | Callable[..., Any] | None = None,
+    runtime_context: Any = _DEFAULT_RUNTIME_CONTEXT,
 ) -> CapsuleResult:
     """Execute ``capsule.toml``'s function-body tool in its selected uv project.
 
     Project defaults, capsule values and runtime overrides are merged by key in
-    that order. Values transferred to the child must be JSON-compatible. See
-    README.md for manifest details.
+    that order. ``runtime`` may name an importable factory as
+    ``"module:attribute"`` or be an importable class/function. The factory is
+    resolved and called in the selected child project with JSON-compatible
+    ``runtime_context`` (omitted means ``{}``; explicit ``None`` means JSON null);
+    its result must provide synchronous ``globals()`` and ``export()`` methods.
+    Both reference forms require the runtime module to be importable in that
+    target environment; callable references do not transfer wrapper import paths.
+    See README.md for details.
     """
     identity, manifest_data = read_capsule_manifest(capsule_dir)
     run_dir = _make_run_dir(identity.name)
@@ -266,8 +323,8 @@ def run(
     capture_paths = {
         "stdout": run_dir / ".child.stdout",
         "stderr": run_dir / ".child.stderr",
-        "events": run_dir / ".session-events.jsonl",
         "error": run_dir / ".execution-error.json",
+        "runtime_export": run_dir / ".runtime-export.json",
     }
     started = datetime.now(timezone.utc).isoformat()
     config: CapsuleConfig | None = None
@@ -276,8 +333,10 @@ def run(
     runner_stderr = ""
     snippet_stdout = ""
     snippet_stderr = ""
-    events: list[dict[str, str]] = []
-    error: dict[str, str] | None = None
+    error: dict[str, Any] | None = None
+    runtime_export: Any = None
+    has_runtime_export = False
+    runtime_export_error: dict[str, str] | None = None
     captured_written = False
     execution_context_started = False
     try:
@@ -301,6 +360,21 @@ def run(
         selected_level = effective_log_level(config, log_level)
         runtime_inputs = validate_runtime_mapping(inputs, "inputs")
         runtime_globals = validate_runtime_mapping(globals, "globals")
+        runtime_ref = _runtime_reference(runtime)
+        if (
+            runtime_ref is None
+            and runtime_context is not _DEFAULT_RUNTIME_CONTEXT
+            and runtime_context is not None
+        ):
+            raise CapsuleConfigError("runtime_context requires runtime")
+        child_runtime_context = (
+            {} if runtime_context is _DEFAULT_RUNTIME_CONTEXT else runtime_context
+        )
+        # Preserve support for caller Mapping implementations while keeping
+        # context a single JSON value, independent of the injection namespaces.
+        if isinstance(child_runtime_context, Mapping):
+            child_runtime_context = dict(child_runtime_context)
+        _validate_json_value(child_runtime_context, "runtime_context")
         final_inputs = effective_inputs(config, runtime_inputs)
         for name, value in final_inputs.items():
             if not isinstance(name, str) or not name.isidentifier():
@@ -326,6 +400,11 @@ def run(
             "tool_path": str(config.tool_path),
             "inputs": final_inputs,
             "globals": resolved_globals,
+            "runtime": (
+                {"reference": runtime_ref, "context": child_runtime_context}
+                if runtime_ref is not None
+                else None
+            ),
         }
         uv = shutil.which("uv")
         if uv is None:
@@ -341,8 +420,8 @@ def run(
             str(result_path),
             str(capture_paths["stdout"]),
             str(capture_paths["stderr"]),
-            str(capture_paths["events"]),
             str(capture_paths["error"]),
+            str(capture_paths["runtime_export"]),
         ]
         completed = subprocess.run(
             command,
@@ -358,9 +437,23 @@ def run(
         runner_stdout, runner_stderr = completed.stdout, completed.stderr
         snippet_stdout = _read_capture(capture_paths["stdout"])
         snippet_stderr = _read_capture(capture_paths["stderr"])
-        events = _read_events(capture_paths["events"])
         error = _read_error(capture_paths["error"])
-        error_detail = error["traceback"] if error is not None else ""
+        if capture_paths["runtime_export"].is_file():
+            runtime_export = json.loads(
+                capture_paths["runtime_export"].read_text(encoding="utf-8")
+            )
+            has_runtime_export = True
+            _write_json(run_dir / "runtime-export.json", runtime_export)
+        if error is not None and isinstance(error.get("runtime_export_error"), dict):
+            runtime_export_error = {
+                key: str(error["runtime_export_error"].get(key, ""))
+                for key in ("type", "message", "traceback")
+            }
+        error_detail = (
+            f"execution phase: {error['phase']}\n{error['traceback']}"
+            if error is not None
+            else ""
+        )
         runner_failure = ""
         if completed.returncode != 0 and error is None:
             runner_failure = _failure_detail(
@@ -372,8 +465,8 @@ def run(
             runner_stderr=runner_stderr,
             snippet_stdout=snippet_stdout,
             snippet_stderr=snippet_stderr,
-            events=events,
             error_detail=error_detail,
+            runtime_export_error=runtime_export_error,
             runner_failure=runner_failure,
         )
         captured_written = True
@@ -395,13 +488,16 @@ def run(
                 runner_stderr=runner_stderr,
                 snippet_stdout=snippet_stdout,
                 snippet_stderr=snippet_stderr,
-                events=events,
                 error_detail=error_detail,
                 runner_failure=runner_failure,
             )
             raise CapsuleExecutionError(
                 _failure_detail(error, runner_stdout, runner_stderr, completed.returncode),
                 run_dir,
+                runtime_export=runtime_export,
+                has_runtime_export=has_runtime_export,
+                runtime_export_error=runtime_export_error,
+                phase=error.get("phase") if error is not None else None,
             )
         if not result_path.is_file():
             raise RuntimeError("child exited successfully without writing a return value")
@@ -421,9 +517,15 @@ def run(
             runner_stderr=runner_stderr,
             snippet_stdout=snippet_stdout,
             snippet_stderr=snippet_stderr,
-            events=events,
         )
-        return CapsuleResult(value=value, run_dir=run_dir)
+        if runtime_ref is not None and not has_runtime_export:
+            raise RuntimeError("child exited successfully without writing runtime export")
+        return CapsuleResult(
+            value=value,
+            run_dir=run_dir,
+            runtime_export=runtime_export,
+            has_runtime_export=has_runtime_export,
+        )
     except CapsuleExecutionError:
         raise
     except Exception as exc:
@@ -435,7 +537,6 @@ def run(
                 runner_stderr=runner_stderr,
                 snippet_stdout=snippet_stdout,
                 snippet_stderr=snippet_stderr,
-                events=events,
                 error_detail=detail,
             )
         else:
@@ -456,7 +557,6 @@ def run(
             runner_stderr=runner_stderr,
             snippet_stdout=snippet_stdout,
             snippet_stderr=snippet_stderr,
-            events=events,
             error_detail=detail,
         )
         if isinstance(exc, CapsuleConfigError):
