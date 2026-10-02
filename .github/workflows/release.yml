@@ -303,6 +303,7 @@ jobs:
           from importlib.metadata import version
           from pathlib import Path
           import os
+          import tomllib
           import py_capsule
           from py_capsule import (
               CapsuleConfigError,
@@ -316,7 +317,10 @@ jobs:
           if installed.is_relative_to(checkout):
               raise SystemExit(f"py_capsule imported from checkout instead of wheel: {installed}")
 
-          assert version("py-capsule") == "0.1.0"
+          project = tomllib.loads(
+              (checkout / "pyproject.toml").read_text(encoding="utf-8")
+          )["project"]
+          assert version(project["name"]) == project["version"]
           assert all(
               symbol is not None
               for symbol in (CapsuleConfigError, CapsuleExecutionError, CapsuleResult, run)
