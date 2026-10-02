@@ -7,6 +7,31 @@ inside the selected child project to provide live Python globals. It does not
 sandbox the snippet: filesystem, network, environment and subprocess access
 remain available to the code.
 
+The first release is **0.0.1 (alpha)**. The API is experimental and may change
+in any `0.x` release, including patches. Pin the exact version in applications
+and review changes before upgrading; `0.0.1` does not promise a stable API.
+
+## Development
+
+Install Python 3.11+, [uv](https://docs.astral.sh/uv/getting-started/installation/),
+and [just](https://just.systems/man/en/packages.html), then run:
+
+```sh
+just                 # list commands
+just format          # apply formatting
+just check           # format check, lint, types, tests, canonical examples
+just build           # wheel/sdist metadata and installed-wheel acceptance
+```
+
+Ruff, ty, pytest, and Twine are managed by uv; recipes sync their locked versions.
+The supplied capsule bodies are immutable fixtures, excluded from static tooling
+and verified by hashes and execution tests. All other Python files are checked.
+
+For maintainers, `just publish patch` (or `minor` / `major`) prepares the version
+commit, annotated tag, and GitHub Release. GitHub Actions publishes to PyPI with
+Trusted Publishing. Use `just publish-initial` for the first **0.0.1** release.
+See [releasing](docs/releasing.md) for setup, prerequisites, and recovery.
+
 ## Install
 
 PyCapsule requires Python 3.11 or newer and the `uv` executable on `PATH`.
@@ -16,9 +41,9 @@ execute inside their selected `uv` project.
 For a published release:
 
 ```sh
-uv add py-capsule
+uv add py-capsule==0.0.1
 # or
-python -m pip install py-capsule
+python -m pip install py-capsule==0.0.1
 ```
 
 Until the first PyPI release is published, a development checkout can be wired

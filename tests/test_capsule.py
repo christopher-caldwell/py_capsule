@@ -91,7 +91,9 @@ def test_runs_unchanged_function_body_in_project_and_retains_result(
 ) -> None:
     isolated_home(monkeypatch, tmp_path)
     project, capsule = make_project(tmp_path)
-    (project / "fixture_helper.py").write_text("VALUE = 'project import'\n", encoding="utf-8")
+    (project / "fixture_helper.py").write_text(
+        "VALUE = 'project import'\n", encoding="utf-8"
+    )
     source = (
         "from fixture_helper import VALUE\n"
         "flag = not flag\n"
@@ -126,7 +128,9 @@ def test_print_json_is_only_the_json_return_value(
 ) -> None:
     isolated_home(monkeypatch, tmp_path)
     _, capsule = make_project(tmp_path)
-    (capsule / "tool.py").write_text("print('not result')\nreturn 'true'\n", encoding="utf-8")
+    (capsule / "tool.py").write_text(
+        "print('not result')\nreturn 'true'\n", encoding="utf-8"
+    )
     result = run(capsule)
     result.print_json()
     assert capsys.readouterr().out == '"true"\n'
@@ -161,7 +165,9 @@ def test_target_project_dependency_is_available_only_in_the_uv_child(
         "[project]\nname = 'capsule-target-only-probe'\nversion = '0.0.1'\n",
         encoding="utf-8",
     )
-    (dep / f"{import_name}.py").write_text("VALUE = 'target project dependency'\n", encoding="utf-8")
+    (dep / f"{import_name}.py").write_text(
+        "VALUE = 'target project dependency'\n", encoding="utf-8"
+    )
     (project / "pyproject.toml").write_text(
         '[project]\nname = "fixture-project"\nversion = "0.0.1"\n'
         'dependencies = ["capsule-target-only-probe"]\n'
@@ -191,7 +197,9 @@ def test_explicit_session_json_global_is_not_converted_to_a_live_object(
 ) -> None:
     isolated_home(monkeypatch, tmp_path)
     _, capsule = make_project(tmp_path)
-    (capsule / "tool.py").write_text("Session.log_event('event')\nreturn True\n", encoding="utf-8")
+    (capsule / "tool.py").write_text(
+        "Session.log_event('event')\nreturn True\n", encoding="utf-8"
+    )
     with pytest.raises(CapsuleExecutionError, match="NoneType"):
         run(capsule, globals={"Session": None})
 
@@ -222,7 +230,10 @@ def test_target_runtime_injects_arbitrary_live_globals_and_chains_export(
         ],
     }
     assert first.has_runtime_export is True
-    assert json.loads((first.run_dir / "runtime-export.json").read_text()) == first.runtime_export
+    assert (
+        json.loads((first.run_dir / "runtime-export.json").read_text())
+        == first.runtime_export
+    )
     assert json.loads((first.run_dir / "result.json").read_text()) == first.value
     provenance = (first.run_dir / "run.json").read_text()
     assert "neutral API used" not in provenance
@@ -271,8 +282,17 @@ def test_importable_runtime_class_object_is_rebuilt_inside_target_project(
 @pytest.mark.parametrize(
     "context",
     [
-        None, False, True, 0, 2.5, "", "context", [],
-        [1, None, {"ok": True}], {}, UserDict({"ok": False}),
+        None,
+        False,
+        True,
+        0,
+        2.5,
+        "",
+        "context",
+        [],
+        [1, None, {"ok": True}],
+        {},
+        UserDict({"ok": False}),
     ],
 )
 def test_runtime_context_round_trips_json_values(
@@ -300,7 +320,11 @@ def test_runtime_context_round_trips_json_values(
     result.print_json()
     assert capsys.readouterr().out == json.dumps(expected, separators=(",", ":")) + "\n"
 
-    chained = run(capsule, runtime="context_runtime:Runtime", runtime_context=result.runtime_export)
+    chained = run(
+        capsule,
+        runtime="context_runtime:Runtime",
+        runtime_context=result.runtime_export,
+    )
     assert chained.value == expected
     omitted = run(capsule, runtime="context_runtime:Runtime")
     assert omitted.value == omitted.runtime_export == {}
@@ -315,6 +339,7 @@ def test_invalid_runtime_context_retains_configuration_evidence_before_launch(
     (capsule / "tool.py").write_text("return True\n", encoding="utf-8")
     with pytest.raises(CapsuleConfigError, match="runtime_context") as raised:
         run(capsule, runtime="absent_runtime:Runtime", runtime_context=context)
+    assert raised.value.run_dir is not None
     metadata = json.loads((raised.value.run_dir / "run.json").read_text())
     assert metadata["status"] == "failed"
     assert metadata["error_type"] == "CapsuleConfigError"
@@ -346,7 +371,9 @@ def test_callable_runtime_in_separate_wrapper_requires_a_target_dependency(
         "[tool.setuptools.packages.find]\ninclude = ['capsule_review_adapter']\n",
         encoding="utf-8",
     )
-    (wrapper / "wrapper_only.py").write_text("VALUE = 'must not leak'\n", encoding="utf-8")
+    (wrapper / "wrapper_only.py").write_text(
+        "VALUE = 'must not leak'\n", encoding="utf-8"
+    )
     script = wrapper / "wrapper.py"
     script.write_text(
         "import json, sys\n"
@@ -360,7 +387,9 @@ def test_callable_runtime_in_separate_wrapper_requires_a_target_dependency(
         "    result.print_json()\n",
         encoding="utf-8",
     )
-    (target / "child_dependency.py").write_text("VALUE = 'target dependency'\n", encoding="utf-8")
+    (target / "child_dependency.py").write_text(
+        "VALUE = 'target dependency'\n", encoding="utf-8"
+    )
     (capsule / "tool.py").write_text(
         "import importlib.util\n"
         "assert importlib.util.find_spec('wrapper_only') is None\n"
@@ -391,7 +420,10 @@ def test_callable_runtime_in_separate_wrapper_requires_a_target_dependency(
     )
     expected = {"value": "target dependency", "prefix": str(target / ".venv")}
     assert invoke_wrapper() == expected
-    assert run(capsule, runtime="capsule_review_adapter:HostRuntime").runtime_export == expected
+    assert (
+        run(capsule, runtime="capsule_review_adapter:HostRuntime").runtime_export
+        == expected
+    )
 
 
 def test_capsule_failure_keeps_successful_runtime_export(
@@ -415,7 +447,10 @@ def test_capsule_failure_keeps_successful_runtime_export(
         "state": {"before_failure": 42},
         "calls": [["Session", "set_value", "before_failure", 42]],
     }
-    assert json.loads((failure.run_dir / "runtime-export.json").read_text()) == failure.runtime_export
+    assert (
+        json.loads((failure.run_dir / "runtime-export.json").read_text())
+        == failure.runtime_export
+    )
     assert "ValueError: capsule broke" in (failure.run_dir / "run.log").read_text()
 
 
@@ -427,7 +462,7 @@ def test_capsule_failure_remains_primary_when_runtime_export_also_fails(
     runtime_path = write_runtime(project)
     runtime_path.write_text(
         runtime_path.read_text(encoding="utf-8").replace(
-            "    def export(self):\n        return {\"state\": self.state, \"calls\": self.calls}\n",
+            '    def export(self):\n        return {"state": self.state, "calls": self.calls}\n',
             "    def export(self):\n        raise RuntimeError('export broke')\n",
         ),
         encoding="utf-8",
@@ -437,7 +472,9 @@ def test_capsule_failure_remains_primary_when_runtime_export_also_fails(
         encoding="utf-8",
     )
 
-    with pytest.raises(CapsuleExecutionError, match="ValueError: capsule broke") as raised:
+    with pytest.raises(
+        CapsuleExecutionError, match="ValueError: capsule broke"
+    ) as raised:
         run(capsule, runtime="runtime_support:Runtime")
 
     failure = raised.value
@@ -476,6 +513,7 @@ def test_runtime_exports_use_strict_json_validation(
         assert not (failure.run_dir / "runtime-export.json").exists()
         if phase == "capsule_execution":
             assert "ValueError: capsule broke" in str(failure)
+            assert failure.runtime_export_error is not None
             assert failure.runtime_export_error["type"] == "TypeError"
 
 
@@ -486,8 +524,7 @@ def test_runtime_setup_and_runtime_global_collisions_retain_phase_evidence(
     project, capsule = make_project(tmp_path)
     runtime_path = write_runtime(project)
     runtime_path.write_text(
-        runtime_path.read_text(encoding="utf-8")
-        + "\nclass BrokenConstructor:\n"
+        runtime_path.read_text(encoding="utf-8") + "\nclass BrokenConstructor:\n"
         "    def __init__(self, context):\n        raise RuntimeError('construct broke')\n"
         "\nclass BrokenGlobals:\n"
         "    def __init__(self, context):\n        pass\n"
@@ -501,27 +538,40 @@ def test_runtime_setup_and_runtime_global_collisions_retain_phase_evidence(
     )
     (capsule / "tool.py").write_text("return True\n", encoding="utf-8")
 
-    with pytest.raises(CapsuleExecutionError, match="runtime import failed") as missing_module:
+    with pytest.raises(
+        CapsuleExecutionError, match="runtime import failed"
+    ) as missing_module:
         run(capsule, runtime="runtime_module_that_does_not_exist:Runtime")
     assert missing_module.value.phase == "runtime_import"
-    assert "execution phase: runtime_import" in (missing_module.value.run_dir / "run.log").read_text()
+    assert (
+        "execution phase: runtime_import"
+        in (missing_module.value.run_dir / "run.log").read_text()
+    )
 
-    with pytest.raises(CapsuleExecutionError, match="runtime reference resolution failed") as missing:
+    with pytest.raises(
+        CapsuleExecutionError, match="runtime reference resolution failed"
+    ) as missing:
         run(capsule, runtime="runtime_support:Missing")
     assert missing.value.phase == "runtime_resolve"
     assert "Missing" in (missing.value.run_dir / "run.log").read_text()
 
-    with pytest.raises(CapsuleExecutionError, match="runtime construction failed") as construction:
+    with pytest.raises(
+        CapsuleExecutionError, match="runtime construction failed"
+    ) as construction:
         run(capsule, runtime="runtime_support:BrokenConstructor")
     assert construction.value.phase == "runtime_construct"
 
-    with pytest.raises(CapsuleExecutionError, match="runtime globals failed") as bad_globals:
+    with pytest.raises(
+        CapsuleExecutionError, match="runtime globals failed"
+    ) as bad_globals:
         run(capsule, runtime="runtime_support:BrokenGlobals")
     assert bad_globals.value.phase == "runtime_globals"
     assert bad_globals.value.has_runtime_export is True
     assert bad_globals.value.runtime_export == {}
 
-    with pytest.raises(CapsuleExecutionError, match="runtime export failed") as bad_export:
+    with pytest.raises(
+        CapsuleExecutionError, match="runtime export failed"
+    ) as bad_export:
         run(capsule, runtime="runtime_support:BrokenExport")
     assert bad_export.value.phase == "runtime_export"
 
@@ -533,7 +583,10 @@ def test_runtime_setup_and_runtime_global_collisions_retain_phase_evidence(
             runtime="runtime_support:Runtime",
         )
     assert collision.value.phase == "runtime_globals"
-    assert json.loads((collision.value.run_dir / "run.json").read_text())["status"] == "failed"
+    assert (
+        json.loads((collision.value.run_dir / "run.json").read_text())["status"]
+        == "failed"
+    )
 
 
 def test_tool_compiles_before_runtime_construction(
@@ -564,10 +617,14 @@ def test_failure_is_raised_and_retained_but_business_error_string_is_a_value(
 ) -> None:
     isolated_home(monkeypatch, tmp_path)
     _, capsule = make_project(tmp_path)
-    (capsule / "tool.py").write_text("return 'Something went wrong'\n", encoding="utf-8")
+    (capsule / "tool.py").write_text(
+        "return 'Something went wrong'\n", encoding="utf-8"
+    )
     assert run(capsule).value == "Something went wrong"
 
-    (capsule / "tool.py").write_text("print('before failure')\nraise ValueError('broken')\n", encoding="utf-8")
+    (capsule / "tool.py").write_text(
+        "print('before failure')\nraise ValueError('broken')\n", encoding="utf-8"
+    )
     with pytest.raises(CapsuleExecutionError) as raised:
         run(capsule)
     run_dir = raised.value.run_dir
@@ -586,7 +643,10 @@ def test_unsupported_return_value_fails_instead_of_being_stringified(
     with pytest.raises(CapsuleExecutionError) as raised:
         run(capsule)
     assert "unsupported type object" in (raised.value.run_dir / "run.log").read_text()
-    assert json.loads((raised.value.run_dir / "run.json").read_text())["status"] == "failed"
+    assert (
+        json.loads((raised.value.run_dir / "run.json").read_text())["status"]
+        == "failed"
+    )
     assert not (raised.value.run_dir / "result.json").exists()
 
 
@@ -608,11 +668,15 @@ def test_secret_is_not_written_to_provenance_and_effective_env_is_resolved(
 ) -> None:
     isolated_home(monkeypatch, tmp_path)
     _, capsule = make_project(tmp_path)
-    manifest = (capsule / "capsule.toml").read_text().replace(
-        '[inputs]\nflag = true\n', '[env]\nTOKEN = "CAPSULE_SECRET"\n'
+    manifest = (
+        (capsule / "capsule.toml")
+        .read_text()
+        .replace("[inputs]\nflag = true\n", '[env]\nTOKEN = "CAPSULE_SECRET"\n')
     )
     (capsule / "capsule.toml").write_text(manifest, encoding="utf-8")
-    (capsule / "tool.py").write_text("return TOKEN == 'secret-value'\n", encoding="utf-8")
+    (capsule / "tool.py").write_text(
+        "return TOKEN == 'secret-value'\n", encoding="utf-8"
+    )
     monkeypatch.setenv("CAPSULE_SECRET", "secret-value")
     result = run(capsule)
     assert result.value is True
@@ -703,7 +767,12 @@ def test_runs_are_unique_and_same_named_capsules_share_history(
     second = run(second_capsule)
     expected_parent = tmp_path / "home" / ".py_capsule" / "sample" / "runs"
     assert first.run_dir != first_again.run_dir
-    assert first.run_dir.parent == first_again.run_dir.parent == second.run_dir.parent == expected_parent
+    assert (
+        first.run_dir.parent
+        == first_again.run_dir.parent
+        == second.run_dir.parent
+        == expected_parent
+    )
     assert first.value == 1 and second.value == 2
     assert json.loads((second.run_dir / "run.json").read_text())["capsule_dir"] == str(
         second_capsule.resolve()
@@ -742,7 +811,7 @@ def test_error_level_mirrors_failures_but_not_session_or_stream_activity(
     fake_uv = fake_bin / "uv"
     fake_uv.write_text(
         "#!/bin/sh\nprintf '%s\\n' 'FAKE_UV_PROGRESS' >&2\n"
-        f"exec {shlex.quote(actual_uv)} \"$@\"\n",
+        f'exec {shlex.quote(actual_uv)} "$@"\n',
         encoding="utf-8",
     )
     fake_uv.chmod(0o755)
@@ -758,7 +827,9 @@ def test_error_level_mirrors_failures_but_not_session_or_stream_activity(
     assert "ValueError: recognized tool failure" in displayed
     assert "routine stderr output" not in displayed
     assert "FAKE_UV_PROGRESS" not in displayed
-    run_log = next((tmp_path / "home" / ".py_capsule" / "sample" / "runs").glob("*/run.log"))
+    run_log = next(
+        (tmp_path / "home" / ".py_capsule" / "sample" / "runs").glob("*/run.log")
+    )
     persisted = run_log.read_text()
     assert "routine stderr output" in persisted
     assert "FAKE_UV_PROGRESS" in persisted
@@ -776,7 +847,9 @@ def test_explicit_project_selection_and_call_from_an_unrelated_directory(
     (capsule / "capsule.toml").write_text(
         'name = "sample"\ntool = "tool.py"\nproject = "../.."\n', encoding="utf-8"
     )
-    (capsule / "tool.py").write_text("import os\nreturn os.getcwd()\n", encoding="utf-8")
+    (capsule / "tool.py").write_text(
+        "import os\nreturn os.getcwd()\n", encoding="utf-8"
+    )
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     old = Path.cwd()
@@ -799,7 +872,9 @@ def test_explicit_project_selection_and_call_from_an_unrelated_directory(
     assert discovered.value == str(project)
 
 
-def test_missing_effective_env_variable_fails_before_snippet(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_missing_effective_env_variable_fails_before_snippet(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     isolated_home(monkeypatch, tmp_path)
     _, capsule = make_project(tmp_path)
     (capsule / "capsule.toml").write_text(
@@ -810,7 +885,10 @@ def test_missing_effective_env_variable_fails_before_snippet(tmp_path: Path, mon
     monkeypatch.delenv("UNSET_CAPSULE_TOKEN", raising=False)
     with pytest.raises(CapsuleExecutionError, match="UNSET_CAPSULE_TOKEN") as raised:
         run(capsule)
-    assert json.loads((raised.value.run_dir / "run.json").read_text())["status"] == "failed"
+    assert (
+        json.loads((raised.value.run_dir / "run.json").read_text())["status"]
+        == "failed"
+    )
 
 
 def test_project_capsule_and_runtime_values_merge_by_name_and_source(
@@ -820,14 +898,14 @@ def test_project_capsule_and_runtime_values_merge_by_name_and_source(
     project, capsule = make_project(tmp_path)
     (project / "pyproject.toml").write_text(
         '[project]\nname = "fixture-project"\nversion = "0.0.1"\n'
-        '[tool.py_capsule.inputs]\n'
+        "[tool.py_capsule.inputs]\n"
         'flag = true\ncount = 3\nempty = "project"\nnothing = "project"\n'
         'payload = { project = true, retained = "lower" }\n'
         'project_only = "inherited"\n'
-        '[tool.py_capsule.globals]\n'
+        "[tool.py_capsule.globals]\n"
         'FROM_PROJECT = "project literal"\n'
         'CHANGE_TO_ENV = "project literal"\n'
-        '[tool.py_capsule.env]\n'
+        "[tool.py_capsule.env]\n"
         'FROM_PROJECT_ENV = "PROJECT_CAPSULE_ENV_VALUE"\n'
         'CHANGE_TO_LITERAL = "UNSET_LOWER_PROJECT_ENV"\n'
         'RUNTIME_SOURCE = "UNSET_RUNTIME_SOURCE_ENV"\n',
@@ -835,7 +913,7 @@ def test_project_capsule_and_runtime_values_merge_by_name_and_source(
     )
     (capsule / "capsule.toml").write_text(
         'name = "sample"\ntool = "tool.py"\n'
-        '[inputs]\ncount = 5\npayload = { capsule = true }\n'
+        "[inputs]\ncount = 5\npayload = { capsule = true }\n"
         'capsule_only = "capsule value"\n'
         '[globals]\nCHANGE_TO_LITERAL = "capsule literal"\n'
         '[env]\nCHANGE_TO_ENV = "CAPSULE_ENV_VALUE"\n',
@@ -903,7 +981,9 @@ def test_project_layer_same_file_duplicates_fail_before_higher_layer_override(
         encoding="utf-8",
     )
     (capsule / "tool.py").write_text("return shared\n", encoding="utf-8")
-    with pytest.raises(CapsuleConfigError, match="both \\[inputs\\].*global source") as raised:
+    with pytest.raises(
+        CapsuleConfigError, match="both \\[inputs\\].*global source"
+    ) as raised:
         run(capsule)
     assert str(project / "pyproject.toml") in str(raised.value)
 
@@ -920,7 +1000,9 @@ def test_project_capsule_and_runtime_log_level_precedence(
         '[tool.py_capsule]\nlog_level = "info"\n',
         encoding="utf-8",
     )
-    (capsule / "tool.py").write_text("print('visible at info')\nreturn True\n", encoding="utf-8")
+    (capsule / "tool.py").write_text(
+        "print('visible at info')\nreturn True\n", encoding="utf-8"
+    )
     run(capsule)
     assert "visible at info" in capsys.readouterr().err
 
@@ -1037,7 +1119,10 @@ def test_documented_wrapper_executes_example_shape_against_local_http_fixture(
                 }
             )
             if body.get("record_id") == "error-case":
-                reply = {"success": False, "error": {"message": "fixture business error"}}
+                reply = {
+                    "success": False,
+                    "error": {"message": "fixture business error"},
+                }
             elif body.get("record_id") == "exception-case":
                 reply = {"success": True}
             else:
@@ -1153,7 +1238,8 @@ def test_documented_wrapper_executes_example_shape_against_local_http_fixture(
         assert "fixture business error" in persisted
         assert any(
             (run_dir / "result.json").is_file()
-            and json.loads((run_dir / "result.json").read_text()) == "Something went wrong"
+            and json.loads((run_dir / "result.json").read_text())
+            == "Something went wrong"
             for run_dir in runs
         )
         execution_failure_record = next(

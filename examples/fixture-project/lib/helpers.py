@@ -9,6 +9,4 @@ def resolve_base_url(*, use_test_env: object, variant: object) -> str:
         raise RuntimeError("the fixture project only provides a local test endpoint")
     if variant not in {"default", "fixture"}:
         raise ValueError(f"unsupported fixture variant: {variant!r}")
-    return os.environ.get(
-        "PY_CAPSULE_FIXTURE_URL", "http://127.0.0.1:8765"
-    ).rstrip("/")
+    return os.environ.get("PY_CAPSULE_FIXTURE_URL", "http://127.0.0.1:8765").rstrip("/")

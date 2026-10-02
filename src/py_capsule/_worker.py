@@ -13,7 +13,7 @@ import tokenize
 import traceback
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 
 _FUNCTION_NAME = "__py_capsule_execute__"
@@ -62,7 +62,7 @@ def _compile_function(source: str, filename: str, input_names: list[str]) -> Any
     source_module = ast.parse(source, filename=filename, mode="exec")
     parameters = ", ".join(input_names)
     wrapper = ast.parse(f"def {_FUNCTION_NAME}({parameters}):\n    pass\n", filename)
-    function = wrapper.body[0]
+    function = cast(ast.FunctionDef, wrapper.body[0])
     function.body = source_module.body or [ast.Pass()]
     wrapper.type_ignores = source_module.type_ignores
     ast.fix_missing_locations(wrapper)
@@ -101,7 +101,9 @@ def main() -> int:
     if len(sys.argv) != 6:
         print("py_capsule worker expected five output file paths", file=sys.stderr)
         return 2
-    result_path, stdout_path, stderr_path, error_path, export_path = map(Path, sys.argv[1:])
+    result_path, stdout_path, stderr_path, error_path, export_path = map(
+        Path, sys.argv[1:]
+    )
     try:
         _redirect_child_streams(stdout_path, stderr_path)
         request = json.load(sys.stdin)
@@ -137,7 +139,7 @@ def main() -> int:
                     f"must be available there: {exc}"
                 ) from exc
             phase = "runtime_resolve"
-            factory = module
+            factory: Any = module
             try:
                 for part in attribute_path.split("."):
                     factory = getattr(factory, part)
@@ -173,7 +175,9 @@ def main() -> int:
             separators=(",", ":"),
         )
     except BaseException as exc:
-        failure = _error_record(exc, phase if "phase" in locals() else "worker_setup")
+        failure: dict[str, Any] = _error_record(
+            exc, phase if "phase" in locals() else "worker_setup"
+        )
         runtime = locals().get("runtime")
         if runtime is not None:
             try:

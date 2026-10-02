@@ -41,8 +41,20 @@ jobs:
       - name: Sync test environment
         run: uv sync --frozen --group dev --python "${{ matrix.python-version }}"
 
+      - name: Check formatting, lint, and types
+        run: |
+          uv run --locked ruff format --check .
+          uv run --locked ruff check .
+          uv run --locked ty check
+
+      - name: Check lockfiles
+        run: |
+          uv lock --check
+          uv lock --check --project examples/wrapper
+          uv lock --check --project examples/fixture-project
+
       - name: Run tests
-        run: uv run --frozen --python "${{ matrix.python-version }}" pytest
+        run: uv run --frozen --python "${{ matrix.python-version }}" python -m pytest
 
       - name: Run canonical examples
         run: uv run --frozen --project examples/wrapper python examples/run_canonical_examples.py
@@ -81,48 +93,7 @@ jobs:
         if: github.event_name == 'release'
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          import os
-          import tomllib
-
-          project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]
-          version = project["version"]
-          expected_tag = f"v{version}"
-          actual_tag = os.environ["RELEASE_TAG"]
-
-          if actual_tag != expected_tag:
-              raise SystemExit(
-                  f"release tag {actual_tag!r} does not match package version {version!r}; "
-                  f"expected {expected_tag!r}"
-              )
-
-          if not project.get("license"):
-              raise SystemExit(
-                  "public release blocked: choose the project license and declare it in "
-                  "[project].license before publishing"
-              )
-          if not project.get("license-files"):
-              raise SystemExit(
-                  "public release blocked: declare the chosen license file(s) in "
-                  "[project].license-files before publishing"
-              )
-
-          license_files = [
-              path
-              for pattern in ("LICENSE*", "COPYING*")
-              for path in Path(".").glob(pattern)
-              if path.is_file()
-          ]
-          if not license_files:
-              raise SystemExit(
-                  "public release blocked: commit the chosen license text before publishing"
-              )
-
-          print(f"release gate accepted {expected_tag}")
-          print("license files:", ", ".join(str(path) for path in license_files))
-          PY
+        run: python -m scripts.release_gate "$RELEASE_TAG"
 
       - name: Report PyPI project state
         run: |
@@ -162,7 +133,7 @@ jobs:
       - name: Build wheel and source distribution
         run: |
           rm -rf build dist
-          uv build
+          uv build --no-sources
 
       - name: Validate package metadata
         run: python -m twine check --strict dist/*
