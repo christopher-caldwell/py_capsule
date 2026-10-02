@@ -69,7 +69,7 @@ and logging details.
 
 The caller may name a runtime factory that is importable from the selected
 project. PyCapsule imports and constructs it in the `uv` child, passing a
-JSON-compatible context mapping. The returned object provides synchronous
+JSON-compatible context value. The returned object provides synchronous
 `globals()` and `export()` methods:
 
 ```python
@@ -82,14 +82,27 @@ print(result.runtime_export)
 ```
 
 The selected project's `host_runtime.py` can define the factory and runtime
-objects. `globals()` returns a mapping of live Python objects; `export()`
+objects. Context may be an object with string keys, list, string, finite number,
+boolean, or JSON null. Omitted context remains `{}`; explicit
+`runtime_context=None` passes JSON null. The factory defines its own schema.
+`globals()` returns a mapping of live Python objects; `export()`
 returns JSON-compatible state. Runtime globals cannot reuse an input or JSON
 global name. Each call builds a fresh runtime. The export is also written to
 `runtime-export.json` in the run directory and can be passed into a later call
 as context. A successful pre-failure export is available as
 `CapsuleExecutionError.runtime_export`. Caller-owned runtime code must be
-importable in the selected child project; the `module:attribute` reference
-keeps import-root handling out of normal caller code.
+importable in the selected child project. Use the `module:attribute` reference
+as the primary API: it avoids importing target-only dependencies in the wrapper.
+An importable class/function object is convenience syntax for the same child
+reference; it does not carry code, parent state, or the wrapper's import paths.
+
+For a separate wrapper and target project, put the adapter module in the target
+project or declare an adapter package as a target dependency (a local uv path
+dependency works too). An adapter available only in the wrapper source tree or
+environment cannot be reconstructed by either reference form. Normal usage
+needs no caller-written `sys.path` changes or import-root calculations; PyCapsule
+uses the target project and its declared dependencies for both runtime and tool
+imports.
 
 The repository wrapper uses the same public path with
 `runtime="fixture_runtime:FixtureRuntime"`. That runtime lives in the selected

@@ -68,9 +68,21 @@ Pass `runtime="module:attribute"` and optional `runtime_context={...}` to
 construct child-local live globals. The selected project's import root is added
 in the child, so callers do not need to calculate it or edit `sys.path`. The
 reference can also be an importable class or function object; PyCapsule converts
-it to its module and qualified name and resolves it in the child. The factory
-receives the context mapping as its sole positional argument and returns an
-object with synchronous `globals()` and `export()` methods. The globals method
+it to its module and qualified name and resolves it in the child. Both forms
+require that module and its dependencies to be available in the target project.
+The callable form does not transfer code, parent mutations, or wrapper import
+paths. Use a target-owned module or a declared target dependency, including a
+local uv path dependency for a shared adapter package. The string form avoids
+having to import target-only dependencies in the wrapper. PyCapsule does not
+automatically expose the wrapper source tree or environment to child imports.
+
+The factory receives one JSON-compatible context value as its sole positional
+argument: an object with string keys, list, string, finite number, boolean, or
+JSON null. Omission passes a fresh `{}` for compatibility; explicit
+`runtime_context=None` passes JSON null. Context is validated and transported
+as one value, never merged into inputs/globals; the factory defines its schema.
+Top-level Mapping implementations are also accepted as JSON objects. The factory
+returns an object with synchronous `globals()` and `export()` methods. The globals method
 must return a mapping of valid Python names to live objects. Runtime globals
 cannot collide with capsule inputs or JSON globals. PyCapsule supplies no
 host-specific names such as `Session` or `Conversation`.
@@ -82,6 +94,11 @@ After a normal Python execution failure, the runner still attempts export and
 exposes a successful value as `CapsuleExecutionError.runtime_export`. If both
 the capsule and export fail, the capsule failure remains primary and the
 secondary export failure is retained in the exception and run log.
+`has_runtime_export` distinguishes a successful JSON-null export from absent
+output. Failure-side export requires a caught Python failure and a working exporter; hard
+process termination cannot guarantee a final snapshot. Runtime exports, returns,
+logs, and error messages may contain sensitive data; context is not persisted as
+a separate artifact and runtime export is deliberately retained.
 
 ## Results, logs and errors
 

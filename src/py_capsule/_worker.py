@@ -131,7 +131,11 @@ def main() -> int:
             try:
                 module = importlib.import_module(module_name)
             except BaseException as exc:
-                raise RuntimeError(f"cannot import runtime module {module_name!r}: {exc}") from exc
+                raise RuntimeError(
+                    f"cannot import runtime module {module_name!r} in selected target "
+                    f"project {str(project_dir)!r}; the runtime and its dependencies "
+                    f"must be available there: {exc}"
+                ) from exc
             phase = "runtime_resolve"
             factory = module
             try:

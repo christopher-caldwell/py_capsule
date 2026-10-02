@@ -28,6 +28,9 @@ from ._config import (
 )
 
 
+_DEFAULT_RUNTIME_CONTEXT = object()
+
+
 class CapsuleExecutionError(RuntimeError):
     """A capsule could not be executed; ``run_dir`` points to retained evidence."""
 
@@ -297,15 +300,18 @@ def run(
     globals: Mapping[str, Any] | None = None,
     log_level: str | None = None,
     runtime: str | type | Callable[..., Any] | None = None,
-    runtime_context: Mapping[str, Any] | None = None,
+    runtime_context: Any = _DEFAULT_RUNTIME_CONTEXT,
 ) -> CapsuleResult:
     """Execute ``capsule.toml``'s function-body tool in its selected uv project.
 
     Project defaults, capsule values and runtime overrides are merged by key in
     that order. ``runtime`` may name an importable factory as
     ``"module:attribute"`` or be an importable class/function. The factory is
-    resolved and called in the selected child project with ``runtime_context``;
+    resolved and called in the selected child project with JSON-compatible
+    ``runtime_context`` (omitted means ``{}``; explicit ``None`` means JSON null);
     its result must provide synchronous ``globals()`` and ``export()`` methods.
+    Both reference forms require the runtime module to be importable in that
+    target environment; callable references do not transfer wrapper import paths.
     See README.md for details.
     """
     identity, manifest_data = read_capsule_manifest(capsule_dir)
@@ -355,15 +361,20 @@ def run(
         runtime_inputs = validate_runtime_mapping(inputs, "inputs")
         runtime_globals = validate_runtime_mapping(globals, "globals")
         runtime_ref = _runtime_reference(runtime)
-        if runtime_ref is None and runtime_context is not None:
+        if (
+            runtime_ref is None
+            and runtime_context is not _DEFAULT_RUNTIME_CONTEXT
+            and runtime_context is not None
+        ):
             raise CapsuleConfigError("runtime_context requires runtime")
-        if runtime_context is None:
-            child_runtime_context: dict[str, Any] = {}
-        elif not isinstance(runtime_context, Mapping):
-            raise CapsuleConfigError("runtime_context must be a mapping")
-        else:
-            child_runtime_context = dict(runtime_context)
-            _validate_json_value(child_runtime_context, "runtime_context")
+        child_runtime_context = (
+            {} if runtime_context is _DEFAULT_RUNTIME_CONTEXT else runtime_context
+        )
+        # Preserve support for caller Mapping implementations while keeping
+        # context a single JSON value, independent of the injection namespaces.
+        if isinstance(child_runtime_context, Mapping):
+            child_runtime_context = dict(child_runtime_context)
+        _validate_json_value(child_runtime_context, "runtime_context")
         final_inputs = effective_inputs(config, runtime_inputs)
         for name, value in final_inputs.items():
             if not isinstance(name, str) or not name.isidentifier():
