@@ -2,7 +2,7 @@
 
 `py_capsule` runs a trusted Python function body in a selected `uv` project and
 returns its top-level `return` value to a Python caller. The runner supplies
-JSON-compatible inputs and globals, and can construct a caller-owned runtime
+JSON-compatible inputs and globals, and can construct a target-available runtime
 inside the selected child project to provide live Python globals. It does not
 sandbox the snippet: filesystem, network, environment and subprocess access
 remain available to the code.
@@ -87,10 +87,43 @@ boolean, or JSON null. Omitted context remains `{}`; explicit
 `runtime_context=None` passes JSON null. The factory defines its own schema.
 `globals()` returns a mapping of live Python objects; `export()`
 returns JSON-compatible state. Runtime globals cannot reuse an input or JSON
-global name. Each call builds a fresh runtime. The export is also written to
-`runtime-export.json` in the run directory and can be passed into a later call
-as context. A successful pre-failure export is available as
-`CapsuleExecutionError.runtime_export`. Caller-owned runtime code must be
+global name. Each call builds a fresh runtime.
+
+A tool body uses supplied globals directly; it does not import them or know
+about PyCapsule. For example, an unchanged tool may contain:
+
+```python
+Session.set_value("offered_openings", matched)
+Conversation.set_metadata("handoff_done", True)
+```
+
+The selected runtime can satisfy those names with:
+
+```python
+class HostRuntime:
+    def __init__(self, context):
+        self.session = SessionShim(context)
+        self.conversation = ConversationShim(context)
+
+    def globals(self):
+        return {
+            "Session": self.session,
+            "Conversation": self.conversation,
+        }
+
+    def export(self):
+        return {"state": "..."}
+```
+
+`Session` and `Conversation` are examples, not built-in PyCapsule concepts.
+If a tool references a name that its selected runtime does not provide, normal
+Python name resolution fails.
+
+The export is also written to `runtime-export.json` in the run directory and
+can be passed into a later call as context. A successful pre-failure export is
+available as `CapsuleExecutionError.runtime_export`. Use
+`has_runtime_export` to distinguish a successful JSON-null export from no
+export. Caller-owned runtime code must be
 importable in the selected child project. Use the `module:attribute` reference
 as the primary API: it avoids importing target-only dependencies in the wrapper.
 An importable class/function object is convenience syntax for the same child
