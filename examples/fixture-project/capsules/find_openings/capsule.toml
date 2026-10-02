@@ -1,0 +1,10 @@
+name = "find_openings"
+tool = "./find_openings.py"
+project = "../.."
+
+[inputs]
+target_day = "2035-06-14"
+target_window = "morning"
+caller_timezone = "UTC"
+context_id = "fixture-context-205"
+request_id = "fixture-request-205"

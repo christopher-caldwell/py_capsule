@@ -127,3 +127,22 @@ preserving the JSON stdout. `info` and `debug` do not stream live output while a
 snippet is running.
 The fixture URL defaults to `http://127.0.0.1:8765` and can be changed with
 `PY_CAPSULE_FIXTURE_URL`.
+
+## Run the four canonical examples
+
+The fixture project includes the four supplied capsule bodies unchanged:
+`fetch_record`, `find_openings`, `list_entries`, and `handoff_specialist`. Their
+ordinary `requests` and `lib.helpers` imports run in the target project's uv
+environment. The example runner starts a temporary local HTTP fixture, provides
+fake credentials and verifies each returned value plus the exported Session or
+Conversation effects. No external service or proprietary host runtime is used.
+
+From the repository root, run:
+
+```sh
+uv run --project examples/wrapper python examples/run_canonical_examples.py
+```
+
+It prints a JSON report for all four examples and also checks the fetch-record
+business-error path. It binds the local fixture to an available loopback port,
+then shuts it down when the runs finish.
