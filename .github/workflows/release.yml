@@ -103,6 +103,11 @@ jobs:
                   "public release blocked: choose the project license and declare it in "
                   "[project].license before publishing"
               )
+          if not project.get("license-files"):
+              raise SystemExit(
+                  "public release blocked: declare the chosen license file(s) in "
+                  "[project].license-files before publishing"
+              )
 
           license_files = [
               path
