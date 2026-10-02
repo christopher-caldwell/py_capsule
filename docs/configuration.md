@@ -42,10 +42,10 @@ variant = "default"
 TEST_SERVICE_API_KEY = "LOCAL_TEST_SERVICE_API_KEY"
 ```
 
-The full precedence is runtime > capsule > selected project > built-in defaults.
-Each mapping merges by name, and nested payloads replace lower-layer values as
-a whole. Runtime presence wins for `false`, `0`, `""`, empty containers and
-`null`. Inputs and globals merge independently, then are checked for a final
+The full precedence for configured inputs/globals is call-time override > capsule
+> selected project > built-in defaults. Each mapping merges by name, and nested
+payloads replace lower-layer values as a whole. Call-time presence wins for
+`false`, `0`, `""`, empty containers and `null`. Inputs and globals merge independently, then are checked for a final
 name collision. A literal global and an environment-backed global compete for
 the same destination; the higher layer wins before environment lookup, so an
 overridden missing lower-layer variable is harmless. Every layer is validated
@@ -57,9 +57,10 @@ Duplicate TOML keys are rejected by the TOML parser. Project defaults come only
 from the selected project and are not recursively inherited from its parent
 projects; the `[tool.py_capsule]` section is optional.
 
-Runtime mappings passed to `run(capsule_dir, inputs=..., globals=...,
-log_level=...)` replace configured values by name, including `False`, `0`, empty
-strings, empty containers and `None`. A replaced environment reference is not
+Call-time `inputs=` and `globals=` passed to
+`run(capsule_dir, inputs=..., globals=..., log_level=...)` replace configured
+values by name, including `False`, `0`, empty strings, empty containers and
+`None`. A replaced environment reference is not
 looked up. Values crossing into the target process must be JSON-compatible:
 strings, booleans, finite numbers, `None`, lists and dictionaries with string
 keys. No arbitrary Python objects are transferred from the caller process.
@@ -82,10 +83,15 @@ JSON null. Omission passes a fresh `{}` for compatibility; explicit
 `runtime_context=None` passes JSON null. Context is validated and transported
 as one value, never merged into inputs/globals; the factory defines its schema.
 Top-level Mapping implementations are also accepted as JSON objects. The factory
-returns an object with synchronous `globals()` and `export()` methods. The globals method
-must return a mapping of valid Python names to live objects. Runtime globals
-cannot collide with capsule inputs or JSON globals. PyCapsule supplies no
-host-specific names such as `Session` or `Conversation`.
+returns an object with synchronous `globals()` and `export()` methods.
+`globals()` must return a mapping of valid Python names to live objects.
+Runtime globals cannot collide with capsule inputs or JSON globals. PyCapsule
+supplies no host-specific names such as `Session` or `Conversation`.
+
+Tool bodies use runtime-provided names directly and do not import them. A tool
+that calls `Session.set_value(...)` or `Conversation.set_metadata(...)` works
+when the selected runtime provides those names. If it does not, ordinary Python
+name resolution fails; PyCapsule does not synthesize missing host APIs.
 
 Each call constructs a fresh runtime. Its `export()` result must be JSON
 compatible and is available as `CapsuleResult.runtime_export`; it is also
@@ -95,15 +101,17 @@ exposes a successful value as `CapsuleExecutionError.runtime_export`. If both
 the capsule and export fail, the capsule failure remains primary and the
 secondary export failure is retained in the exception and run log.
 `has_runtime_export` distinguishes a successful JSON-null export from absent
-output. Failure-side export requires a caught Python failure and a working exporter; hard
-process termination cannot guarantee a final snapshot. Runtime exports, returns,
+output. Failure-side export requires a caught Python failure and a working exporter;
+hard process termination cannot guarantee a final snapshot. Runtime exports, returns,
 logs, and error messages may contain sensitive data; context is not persisted as
 a separate artifact and runtime export is deliberately retained.
 
 ## Results, logs and errors
 
-`run()` returns a `CapsuleResult` with `value` and `run_dir`. It does not print
-the return value. `result.print_json()` writes one strict JSON value and a
+`run()` returns a `CapsuleResult` with `value`, `run_dir`,
+`runtime_export`, and `has_runtime_export`. Without a runtime,
+`runtime_export` is `None` and `has_runtime_export` is false. It does not
+print the return value. `result.print_json()` writes one strict JSON value and a
 newline to caller stdout; a returned string remains a JSON string. Unsupported
 return values, including non-finite floats, fail clearly. Return validation
 rejects unsupported shapes before writing `result.json`; object keys must
@@ -114,11 +122,15 @@ also has a `run.json` provenance record; a successful JSON-compatible return is
 in `result.json`. Ordinary execution failures raise `CapsuleExecutionError`,
 whose `run_dir` points to the retained evidence. Before a valid capsule name can be read, manifest failures raise
 `CapsuleConfigError` without creating a run. After the name is known, manifest,
-runtime mapping and merge validation failures create a failed run with
+call-time mapping and merge validation failures create a failed run with
 diagnostics and raise `CapsuleConfigError` with `run_dir` set to that evidence.
 Missing effective environment values and child execution failures raise
-`CapsuleExecutionError`, also with `run_dir`. A returned error-shaped business
-value remains an ordinary successful value.
+`CapsuleExecutionError`, also with `run_dir`. Runtime-backed execution errors
+also expose `runtime_export` and `has_runtime_export`; when export itself fails
+after an earlier capsule failure, `runtime_export_error` retains that secondary
+failure and the capsule failure remains primary. `phase` identifies the child
+execution stage when available. A returned error-shaped business value remains
+an ordinary successful value.
 
 Log levels are `none`, `error`, `info` and `debug`; the default is `none`.
 Retention is independent of terminal display. `none` never mirrors logs.
