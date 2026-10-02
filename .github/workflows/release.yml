@@ -1,0 +1,378 @@
+name: Package release
+
+on:
+  pull_request:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+env:
+  UV_VERSION: "0.12.21"
+  TWINE_VERSION: "7.0.0"
+
+jobs:
+  test:
+    name: Test Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+
+    steps:
+      - name: Check out release revision
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        run: python -m pip install --disable-pip-version-check "uv==${UV_VERSION}"
+
+      - name: Sync test environment
+        run: uv sync --frozen --group dev --python "${{ matrix.python-version }}"
+
+      - name: Run tests
+        run: uv run --frozen --python "${{ matrix.python-version }}" pytest
+
+      - name: Run canonical examples
+        run: uv run --frozen --project examples/wrapper python examples/run_canonical_examples.py
+
+      - name: Check whitespace errors
+        run: |
+          if git rev-parse --verify origin/main >/dev/null 2>&1; then
+            base="$(git merge-base origin/main HEAD)"
+            git diff --check "$base" HEAD
+          else
+            git diff --check
+          fi
+
+  build:
+    name: Build and inspect distributions
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out release revision
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install build validation tools
+        run: |
+          python -m pip install --disable-pip-version-check "uv==${UV_VERSION}" "twine==${TWINE_VERSION}"
+
+      - name: Verify release gate
+        if: github.event_name == 'release'
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import os
+          import tomllib
+
+          project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]
+          version = project["version"]
+          expected_tag = f"v{version}"
+          actual_tag = os.environ["RELEASE_TAG"]
+
+          if actual_tag != expected_tag:
+              raise SystemExit(
+                  f"release tag {actual_tag!r} does not match package version {version!r}; "
+                  f"expected {expected_tag!r}"
+              )
+
+          if not project.get("license"):
+              raise SystemExit(
+                  "public release blocked: choose the project license and declare it in "
+                  "[project].license before publishing"
+              )
+
+          license_files = [
+              path
+              for pattern in ("LICENSE*", "COPYING*")
+              for path in Path(".").glob(pattern)
+              if path.is_file()
+          ]
+          if not license_files:
+              raise SystemExit(
+                  "public release blocked: commit the chosen license text before publishing"
+              )
+
+          print(f"release gate accepted {expected_tag}")
+          print("license files:", ", ".join(str(path) for path in license_files))
+          PY
+
+      - name: Report PyPI project state
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from urllib.error import HTTPError
+          from urllib.request import urlopen
+          import json
+          import tomllib
+
+          project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]
+          name = project["name"]
+          version = project["version"]
+          url = f"https://pypi.org/pypi/{name}/json"
+
+          try:
+              with urlopen(url, timeout=20) as response:
+                  payload = json.load(response)
+          except HTTPError as exc:
+              if exc.code == 404:
+                  print(f"{name!r} is not currently registered on PyPI")
+              else:
+                  raise
+          else:
+              releases = payload.get("releases", {})
+              if version in releases and releases[version]:
+                  raise SystemExit(
+                      f"PyPI already contains files for {name} {version}; "
+                      "refusing to build a duplicate release candidate"
+                  )
+              print(
+                  f"PyPI already has a project named {name!r}; "
+                  "confirm ownership before first publication"
+              )
+          PY
+
+      - name: Build wheel and source distribution
+        run: |
+          rm -rf build dist
+          uv build
+
+      - name: Validate package metadata
+        run: python -m twine check --strict dist/*
+
+      - name: Inspect distribution contents
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+          import tarfile
+          import zipfile
+
+          dist = Path("dist")
+          wheels = sorted(dist.glob("*.whl"))
+          sdists = sorted(dist.glob("*.tar.gz"))
+          if len(wheels) != 1 or len(sdists) != 1:
+              raise SystemExit(
+                  f"expected one wheel and one sdist; found {len(wheels)} wheel(s) "
+                  f"and {len(sdists)} sdist(s)"
+              )
+
+          expected_package_files = {
+              "py_capsule/__init__.py",
+              "py_capsule/_config.py",
+              "py_capsule/_worker.py",
+              "py_capsule/api.py",
+          }
+          forbidden_markers = (
+              "/.git/",
+              "/.venv/",
+              "/__pycache__/",
+              "/.pytest_cache/",
+              "/build/",
+              "/dist/",
+          )
+
+          wheel = wheels[0]
+          with zipfile.ZipFile(wheel) as archive:
+              wheel_names = set(archive.namelist())
+              package_files = {
+                  name for name in wheel_names
+                  if name.startswith("py_capsule/") and not name.endswith("/")
+              }
+              if package_files != expected_package_files:
+                  raise SystemExit(
+                      "wheel package contents differ from the supported library surface:\n"
+                      + "\n".join(sorted(package_files))
+                  )
+              unexpected_roots = {
+                  name.split("/", 1)[0]
+                  for name in wheel_names
+                  if not (
+                      name.startswith("py_capsule/")
+                      or (
+                          name.startswith("py_capsule-")
+                          and ".dist-info/" in name
+                      )
+                  )
+              }
+              if unexpected_roots:
+                  raise SystemExit(
+                      "unexpected wheel top-level entries: "
+                      + ", ".join(sorted(unexpected_roots))
+                  )
+
+          sdist = sdists[0]
+          with tarfile.open(sdist, "r:gz") as archive:
+              raw_names = archive.getnames()
+              stripped = {
+                  name.split("/", 1)[1]
+                  for name in raw_names
+                  if "/" in name
+              }
+              required = {
+                  "pyproject.toml",
+                  "README.md",
+                  "src/py_capsule/__init__.py",
+                  "src/py_capsule/_config.py",
+                  "src/py_capsule/_worker.py",
+                  "src/py_capsule/api.py",
+              }
+              missing = required - stripped
+              if missing:
+                  raise SystemExit(
+                      "sdist is missing required files: " + ", ".join(sorted(missing))
+                  )
+              for name in raw_names:
+                  normalized = "/" + name.strip("/") + "/"
+                  if any(marker in normalized for marker in forbidden_markers):
+                      raise SystemExit(f"forbidden generated path in sdist: {name}")
+
+          for artifact in (wheel, sdist):
+              digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+              print(f"{digest}  {artifact}")
+          PY
+
+      - name: Store exact distributions
+        uses: actions/upload-artifact@v5
+        with:
+          name: python-package-distributions
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+
+  artifact-test:
+    name: Test installed wheel
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out release revision for acceptance fixtures
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        run: python -m pip install --disable-pip-version-check "uv==${UV_VERSION}"
+
+      - name: Retrieve exact distributions
+        uses: actions/download-artifact@v6
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Install wheel in an isolated environment
+        run: |
+          python -m venv "$RUNNER_TEMP/wheel-venv"
+          "$RUNNER_TEMP/wheel-venv/bin/python" -m pip install --disable-pip-version-check --no-deps dist/*.whl
+
+      - name: Verify installed public API and real capsule execution
+        env:
+          PYTHONPATH: ""
+          PYCAPSULE_ACCEPTANCE_HOME: ${{ runner.temp }}/pycapsule-home
+        run: |
+          cd "$RUNNER_TEMP"
+          HOME="$PYCAPSULE_ACCEPTANCE_HOME" "$RUNNER_TEMP/wheel-venv/bin/python" - <<'PY'
+          from importlib.metadata import version
+          from pathlib import Path
+          import os
+          import py_capsule
+          from py_capsule import (
+              CapsuleConfigError,
+              CapsuleExecutionError,
+              CapsuleResult,
+              run,
+          )
+
+          installed = Path(py_capsule.__file__).resolve()
+          checkout = Path(os.environ["GITHUB_WORKSPACE"]).resolve()
+          if installed.is_relative_to(checkout):
+              raise SystemExit(f"py_capsule imported from checkout instead of wheel: {installed}")
+
+          assert version("py-capsule") == "0.1.0"
+          assert all(
+              symbol is not None
+              for symbol in (CapsuleConfigError, CapsuleExecutionError, CapsuleResult, run)
+          )
+          print(f"installed py_capsule from {installed}")
+          PY
+
+          HOME="$PYCAPSULE_ACCEPTANCE_HOME"             PYTHONPATH=""             "$RUNNER_TEMP/wheel-venv/bin/python"             "$GITHUB_WORKSPACE/examples/run_canonical_examples.py"
+
+      - name: Rebuild from sdist and compare library sources
+        run: |
+          mkdir -p "$RUNNER_TEMP/from-sdist"
+          python -m pip wheel             --disable-pip-version-check             --no-deps             --no-cache-dir             --wheel-dir "$RUNNER_TEMP/from-sdist"             dist/*.tar.gz
+
+          python - <<'PY'
+          from pathlib import Path
+          import zipfile
+
+          original = next(Path("dist").glob("*.whl"))
+          rebuilt = next(Path(__import__("os").environ["RUNNER_TEMP"]).joinpath("from-sdist").glob("*.whl"))
+
+          with zipfile.ZipFile(original) as first, zipfile.ZipFile(rebuilt) as second:
+              first_sources = {
+                  name: first.read(name)
+                  for name in first.namelist()
+                  if name.startswith("py_capsule/") and name.endswith(".py")
+              }
+              second_sources = {
+                  name: second.read(name)
+                  for name in second.namelist()
+                  if name.startswith("py_capsule/") and name.endswith(".py")
+              }
+
+          if first_sources != second_sources:
+              raise SystemExit("wheel rebuilt from sdist does not contain the same library sources")
+          print("sdist rebuilt to an equivalent library wheel")
+          PY
+
+  publish:
+    name: Publish to PyPI
+    if: github.event_name == 'release'
+    needs: artifact-test
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/py-capsule
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Retrieve validated distributions
+        uses: actions/download-artifact@v6
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Publish exact distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
