@@ -26,9 +26,10 @@ TEST_SERVICE_API_KEY = "LOCAL_TEST_SERVICE_API_KEY"
 
 `inputs` become function parameters. `globals` and `env` supply Python globals;
 `env` maps an injected name to the name of a variable in the host process. The
-runner resolves only the winning environment mapping and never copies the whole
-host environment. Shared defaults can live in the selected project's
-`pyproject.toml`:
+runner resolves only the winning `[env]` mapping when deciding which values to
+inject as Python globals. This is not process-environment isolation: the `uv`
+child otherwise inherits the caller's ordinary subprocess environment. Shared
+defaults can live in the selected project's `pyproject.toml`:
 
 ```toml
 [tool.py_capsule]
@@ -42,11 +43,11 @@ variant = "default"
 TEST_SERVICE_API_KEY = "LOCAL_TEST_SERVICE_API_KEY"
 ```
 
-The full precedence for configured inputs/globals is call-time override > capsule
-> selected project > built-in defaults. Each mapping merges by name, and nested
-payloads replace lower-layer values as a whole. Call-time presence wins for
-`false`, `0`, `""`, empty containers and `null`. Inputs and globals merge independently, then are checked for a final
-name collision. A literal global and an environment-backed global compete for
+The full precedence for configured inputs/globals is call-time override >
+capsule > selected project > built-in defaults. Each mapping merges by name,
+and nested payloads replace lower-layer values as a whole. Call-time presence
+wins for `false`, `0`, `""`, empty containers and `null`. Inputs and globals
+merge independently, then are checked for a final name collision. A literal global and an environment-backed global compete for
 the same destination; the higher layer wins before environment lookup, so an
 overridden missing lower-layer variable is harmless. Every layer is validated
 on its own before merging. One config file cannot define a global destination
@@ -101,10 +102,11 @@ exposes a successful value as `CapsuleExecutionError.runtime_export`. If both
 the capsule and export fail, the capsule failure remains primary and the
 secondary export failure is retained in the exception and run log.
 `has_runtime_export` distinguishes a successful JSON-null export from absent
-output. Failure-side export requires a caught Python failure and a working exporter;
-hard process termination cannot guarantee a final snapshot. Runtime exports, returns,
-logs, and error messages may contain sensitive data; context is not persisted as
-a separate artifact and runtime export is deliberately retained.
+output. Failure-side export requires a caught Python failure and a working
+exporter; hard process termination cannot guarantee a final snapshot. Runtime
+exports, returns, logs, and error messages may contain sensitive data; context
+is not persisted as a separate artifact and runtime export is deliberately
+retained.
 
 ## Results, logs and errors
 
@@ -119,9 +121,9 @@ already be strings and are never coerced.
 
 Snippet stdout/stderr and `uv` diagnostics are captured in `run.log`. Each run
 also has a `run.json` provenance record; a successful JSON-compatible return is
-in `result.json`. Ordinary execution failures raise `CapsuleExecutionError`,
-whose `run_dir` points to the retained evidence. Before a valid capsule name can be read, manifest failures raise
-`CapsuleConfigError` without creating a run. After the name is known, manifest,
+in `result.json`. Ordinary execution failures raise `CapsuleExecutionError`, whose `run_dir`
+points to the retained evidence. Before a valid capsule name can be read,
+manifest failures raise `CapsuleConfigError` without creating a run. After the name is known, manifest,
 call-time mapping and merge validation failures create a failed run with
 diagnostics and raise `CapsuleConfigError` with `run_dir` set to that evidence.
 Missing effective environment values and child execution failures raise
