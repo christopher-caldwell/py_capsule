@@ -15,5 +15,6 @@ result = run(
     capsule_dir,
     inputs={"record_id": os.environ.get("RECORD_ID", "example-record")},
     log_level=os.environ.get("PYCAPSULE_LOG_LEVEL"),
+    runtime="fixture_runtime:FixtureRuntime",
 )
 result.print_json()

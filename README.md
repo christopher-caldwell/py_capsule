@@ -2,9 +2,10 @@
 
 `py_capsule` runs a trusted Python function body in a selected `uv` project and
 returns its top-level `return` value to a Python caller. The runner supplies
-inputs, globals and the small `Session.log_event()` helper used by the supplied
-example. It does not sandbox the snippet: filesystem, network, environment and
-subprocess access remain available to the code.
+JSON-compatible inputs and globals, and can construct a caller-owned runtime
+inside the selected child project to provide live Python globals. It does not
+sandbox the snippet: filesystem, network, environment and subprocess access
+remain available to the code.
 
 ## Install for a wrapper
 
@@ -58,11 +59,41 @@ result.print_json()
 ```
 
 `run()` is quiet on caller stdout. `result.print_json()` deliberately writes
-only the returned JSON value there. Captured snippet output and `Session` events
-are retained under `~/.py_capsule/<name>/runs/<run-id>/`; the result exposes that
-directory as `result.run_dir`. See [docs/configuration.md](docs/configuration.md)
-for the manifest, project selection, layered defaults, environment globals,
-failure and logging details.
+only the returned JSON value there. Captured snippet output is retained under
+`~/.py_capsule/<name>/runs/<run-id>/`; the result exposes that directory as
+`result.run_dir`. See [docs/configuration.md](docs/configuration.md) for the
+manifest, project selection, layered defaults, environment globals, failure
+and logging details.
+
+## Child-local runtime globals
+
+The caller may name a runtime factory that is importable from the selected
+project. PyCapsule imports and constructs it in the `uv` child, passing a
+JSON-compatible context mapping. The returned object provides synchronous
+`globals()` and `export()` methods:
+
+```python
+result = run(
+    capsule,
+    runtime="host_runtime:build_runtime",
+    runtime_context={"conversation_id": "example-123"},
+)
+print(result.runtime_export)
+```
+
+The selected project's `host_runtime.py` can define the factory and runtime
+objects. `globals()` returns a mapping of live Python objects; `export()`
+returns JSON-compatible state. Runtime globals cannot reuse an input or JSON
+global name. Each call builds a fresh runtime. The export is also written to
+`runtime-export.json` in the run directory and can be passed into a later call
+as context. A successful pre-failure export is available as
+`CapsuleExecutionError.runtime_export`. Caller-owned runtime code must be
+importable in the selected child project; the `module:attribute` reference
+keeps import-root handling out of normal caller code.
+
+The repository wrapper uses the same public path with
+`runtime="fixture_runtime:FixtureRuntime"`. That runtime lives in the selected
+fixture project and is imported and built by its `uv` child.
 
 ## Run the controlled example
 
@@ -91,7 +122,7 @@ cd /tmp
 The wrapper emits only the returned JSON value on stdout. Set `RECORD_ID` to
 choose another record; `RECORD_ID=error-case` demonstrates an ordinary
 business-error return. Set `PYCAPSULE_LOG_LEVEL=info` to mirror captured
-snippet output and `Session` events on stderr after the snippet finishes, while
+snippet output and runtime messages on stderr after the snippet finishes, while
 preserving the JSON stdout. `info` and `debug` do not stream live output while a
 snippet is running.
 The fixture URL defaults to `http://127.0.0.1:8765` and can be changed with

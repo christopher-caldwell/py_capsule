@@ -62,11 +62,26 @@ log_level=...)` replace configured values by name, including `False`, `0`, empty
 strings, empty containers and `None`. A replaced environment reference is not
 looked up. Values crossing into the target process must be JSON-compatible:
 strings, booleans, finite numbers, `None`, lists and dictionaries with string
-keys. No arbitrary Python objects are transferred.
+keys. No arbitrary Python objects are transferred from the caller process.
 
-The built-in `Session` provides only `Session.log_event(message)`. Supplying a
-global named `Session` replaces this fallback. This is a local compatibility
-shim, not full Decagon runtime emulation.
+Pass `runtime="module:attribute"` and optional `runtime_context={...}` to
+construct child-local live globals. The selected project's import root is added
+in the child, so callers do not need to calculate it or edit `sys.path`. The
+reference can also be an importable class or function object; PyCapsule converts
+it to its module and qualified name and resolves it in the child. The factory
+receives the context mapping as its sole positional argument and returns an
+object with synchronous `globals()` and `export()` methods. The globals method
+must return a mapping of valid Python names to live objects. Runtime globals
+cannot collide with capsule inputs or JSON globals. PyCapsule supplies no
+host-specific names such as `Session` or `Conversation`.
+
+Each call constructs a fresh runtime. Its `export()` result must be JSON
+compatible and is available as `CapsuleResult.runtime_export`; it is also
+persisted separately as `runtime-export.json`, not copied into `run.json`.
+After a normal Python execution failure, the runner still attempts export and
+exposes a successful value as `CapsuleExecutionError.runtime_export`. If both
+the capsule and export fail, the capsule failure remains primary and the
+secondary export failure is retained in the exception and run log.
 
 ## Results, logs and errors
 
@@ -77,11 +92,10 @@ return values, including non-finite floats, fail clearly. Return validation
 rejects unsupported shapes before writing `result.json`; object keys must
 already be strings and are never coerced.
 
-Snippet stdout/stderr, `Session.log_event` records and `uv` diagnostics are
-captured in `run.log`. Each run also has a `run.json` provenance record; a
-successful JSON-compatible return is in `result.json`. Ordinary execution
-failures raise `CapsuleExecutionError`, whose `run_dir` points to the retained
-evidence. Before a valid capsule name can be read, manifest failures raise
+Snippet stdout/stderr and `uv` diagnostics are captured in `run.log`. Each run
+also has a `run.json` provenance record; a successful JSON-compatible return is
+in `result.json`. Ordinary execution failures raise `CapsuleExecutionError`,
+whose `run_dir` points to the retained evidence. Before a valid capsule name can be read, manifest failures raise
 `CapsuleConfigError` without creating a run. After the name is known, manifest,
 runtime mapping and merge validation failures create a failed run with
 diagnostics and raise `CapsuleConfigError` with `run_dir` set to that evidence.
@@ -91,12 +105,10 @@ value remains an ordinary successful value.
 
 Log levels are `none`, `error`, `info` and `debug`; the default is `none`.
 Retention is independent of terminal display. `none` never mirrors logs.
-`Session.log_event` records are classified as info events, separately from
-snippet stdout/stderr and `uv` launcher output. `error` mirrors structured
-capsule failures or recognized `uv` error diagnostics; it does not mirror
-ordinary Session messages, unstructured snippet output, or `uv` progress just
-because they appeared on stderr. `info` mirrors snippet streams, Session events
-and execution failures to caller stderr after the child process exits. `debug`
+`error` mirrors structured capsule failures or recognized `uv` error
+diagnostics; it does not mirror unstructured snippet output or `uv` progress
+just because they appeared on stderr. `info` mirrors snippet streams and
+execution failures to caller stderr after the child process exits. `debug`
 also mirrors `uv` launcher diagnostics after execution. Neither level streams
 output while a snippet is running, so a still-running or hung snippet provides
 no live terminal progress. The caller stdout is not replaced. User wrapper
