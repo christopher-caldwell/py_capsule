@@ -7,10 +7,22 @@ inside the selected child project to provide live Python globals. It does not
 sandbox the snippet: filesystem, network, environment and subprocess access
 remain available to the code.
 
-## Install for a wrapper
+## Install
 
-The executable wrapper imports `py_capsule` in its own environment. For a local
-checkout, a small wrapper project can depend on the source tree directly:
+PyCapsule requires Python 3.11 or newer and the `uv` executable on `PATH`.
+Install the package in the caller or wrapper environment; capsules themselves
+execute inside their selected `uv` project.
+
+For a published release:
+
+```sh
+uv add py-capsule
+# or
+python -m pip install py-capsule
+```
+
+Until the first PyPI release is published, a development checkout can be wired
+into a wrapper project explicitly:
 
 ```toml
 # wrapper-project/pyproject.toml
@@ -61,9 +73,13 @@ result.print_json()
 `run()` is quiet on caller stdout. `result.print_json()` deliberately writes
 only the returned JSON value there. Captured snippet output is retained under
 `~/.py_capsule/<name>/runs/<run-id>/`; the result exposes that directory as
-`result.run_dir`. See [docs/configuration.md](docs/configuration.md) for the
-manifest, project selection, layered defaults, environment globals, failure
-and logging details.
+`result.run_dir`. Capsule manifests may define `[inputs]`, `[globals]`, and `[env]`.
+Call-time inputs and globals override capsule values, which override
+`[tool.py_capsule]` defaults from the selected project. `[env]` maps an
+injected global name to a host environment variable name. The optional
+`project` setting selects the `uv` project; without it, PyCapsule finds the
+nearest ancestor `pyproject.toml` from the capsule directory. Log levels are
+`none`, `error`, `info`, and `debug`.
 
 ## Child-local runtime globals
 
