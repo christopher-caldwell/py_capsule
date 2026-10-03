@@ -2,7 +2,7 @@
 name = "py-capsule-example-wrapper"
 version = "0.1.0"
 requires-python = ">=3.11"
-dependencies = ["py-capsule"]
+dependencies = ["capsule-runner"]
 
 [tool.uv.sources]
-py-capsule = { path = "../..", editable = true }
+capsule-runner = { path = "../..", editable = true }

@@ -3,7 +3,7 @@ requires = ["setuptools>=77.0.3"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "py-capsule"
+name = "capsule-runner"
 version = "0.0.1"
 description = "Run trusted Python function-body snippets in their uv project context"
 readme = "README.md"

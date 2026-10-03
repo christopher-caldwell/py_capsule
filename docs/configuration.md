@@ -155,7 +155,7 @@ environment into its provenance record.
 ## Executable wrappers
 
 Install py_capsule into the wrapper's environment. For a local checkout, a
-wrapper project's `pyproject.toml` can declare `py-capsule` and point
+wrapper project's `pyproject.toml` can declare `capsule-runner` and point
 `[tool.uv.sources]` at the checkout; the README shows the complete snippet and
 launch command. An existing wrapper environment can use
 `uv pip install -e /path/to/py_capsule`. A user-owned `uv run --script` wrapper

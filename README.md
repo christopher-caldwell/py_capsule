@@ -34,6 +34,9 @@ See [releasing](docs/releasing.md) for setup, prerequisites, and recovery.
 
 ## Install
 
+The PyPI distribution is named `capsule-runner`; the Python import remains
+`py_capsule`.
+
 PyCapsule requires Python 3.11 or newer and the `uv` executable on `PATH`.
 Install the package in the caller or wrapper environment; capsules themselves
 execute inside their selected `uv` project.
@@ -41,9 +44,9 @@ execute inside their selected `uv` project.
 For a published release:
 
 ```sh
-uv add py-capsule==0.0.1
+uv add capsule-runner==0.0.1
 # or
-python -m pip install py-capsule==0.0.1
+python -m pip install capsule-runner==0.0.1
 ```
 
 Until the first PyPI release is published, a development checkout can be wired
@@ -55,10 +58,10 @@ into a wrapper project explicitly:
 name = "capsule-wrapper"
 version = "0.1.0"
 requires-python = ">=3.11"
-dependencies = ["py-capsule"]
+dependencies = ["capsule-runner"]
 
 [tool.uv.sources]
-py-capsule = { path = "../py_capsule", editable = true }
+capsule-runner = { path = "../py_capsule", editable = true }
 ```
 
 Run the wrapper with `uv run --project /path/to/wrapper-project /path/to/wrapper-project/wrapper.py`.

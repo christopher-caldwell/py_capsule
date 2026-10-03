@@ -56,14 +56,18 @@ def releases() -> dict[str, bool]:
 
 def check_index(version: str) -> None:
     try:
-        with urlopen("https://pypi.org/pypi/py-capsule/json", timeout=20) as response:
+        with urlopen(
+            "https://pypi.org/pypi/capsule-runner/json", timeout=20
+        ) as response:
             data = json.load(response)
     except HTTPError as exc:
         if exc.code == 404:
             return
         raise
     if version in data["releases"]:
-        raise RuntimeError(f"PyPI already knows py-capsule {version}; refusing reuse")
+        raise RuntimeError(
+            f"PyPI already knows capsule-runner {version}; refusing reuse"
+        )
     print("PyPI project exists; its owner must have configured Trusted Publishing.")
 
 

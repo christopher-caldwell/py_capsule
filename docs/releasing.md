@@ -6,7 +6,7 @@ This is a normal installable Python version, not a promise of 1.0 API stability.
 
 PyPI (the Python Package Index) is the public directory where people find and
 download Python libraries. Once PyCapsule is published there, a user can install
-it with `pip install py-capsule==0.0.1` or `uv add py-capsule==0.0.1`.
+it with `pip install capsule-runner==0.0.1` or `uv add capsule-runner==0.0.1`.
 GitHub hosts the source code and runs the automation; PyPI hosts the installable
 package. You only need to set up the publishing connection once.
 
@@ -38,7 +38,7 @@ published to public PyPI private.
   [Publishing settings](https://pypi.org/manage/account/publishing/), configure
   a **pending Trusted Publisher** for a new PyPI project. This authorizes this
   repository's GitHub Actions workflow to upload packages on your behalf.
-  Use project `py-capsule`, owner `christopher-caldwell`, repository
+  Use project `capsule-runner`, owner `christopher-caldwell`, repository
   `py_capsule`, workflow `release.yml`, and environment `pypi`. If the project
   already exists, confirm ownership and add its ordinary Trusted Publisher.
   A pending publisher does not reserve the name. No API token is required.
@@ -129,7 +129,7 @@ sources. The publish job downloads these exact artifacts and does not rebuild.
 The pending `pypi` environment approval, if configured, remains a manual step.
 
 After successful publication, verify from a separate project with
-`uv add py-capsule==0.0.1` (substitute the released version on subsequent releases).
+`uv add capsule-runner==0.0.1` (substitute the released version on subsequent releases).
 Remove any old Git/local source override and regenerate that consumer's lockfile.
 
 ## Tool choice
