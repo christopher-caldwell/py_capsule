@@ -1,17 +1,29 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77.0.3"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "py-capsule"
-version = "0.1.0"
+name = "capsule-runner"
+version = "0.0.1"
 description = "Run trusted Python function-body snippets in their uv project context"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = []
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+]
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = [
+    "pytest>=8",
+    "ruff>=0.16.10",
+    "twine==7.0.0",
+    "ty>=0.0.84",
+]
 
 [tool.setuptools]
 package-dir = { "" = "src" }
@@ -21,3 +33,17 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+# These are immutable function bodies with injected globals and top-level return.
+extend-exclude = ["examples/fixture-project/capsules"]
+
+[tool.ty.environment]
+python-version = "3.11"
+
+[tool.ty.src]
+exclude = ["examples/fixture-project/capsules"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]

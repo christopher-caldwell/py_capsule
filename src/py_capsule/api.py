@@ -186,7 +186,7 @@ def _append_log(
         _append_section(stream, "uv execution error", runner_failure)
 
 
-def _write_terminal(stderr: str, label: str, content: str) -> None:
+def _write_terminal(stderr: TextIO, label: str, content: str) -> None:
     if not content:
         return
     stderr.write(f"[py_capsule {label}]\n{content}")
@@ -284,13 +284,20 @@ def _runtime_reference(runtime: str | type | Callable[..., Any] | None) -> str |
             "runtime must be an importable class/function or a 'module:attribute' reference"
         )
     if reference.count(":") != 1:
-        raise CapsuleConfigError("runtime reference must use the 'module:attribute' form")
+        raise CapsuleConfigError(
+            "runtime reference must use the 'module:attribute' form"
+        )
     module, attribute = reference.split(":", 1)
     parts = module.split(".") + attribute.split(".")
-    if module == "__main__" or not module or not attribute or any(
-        not part.isidentifier() or keyword.iskeyword(part) for part in parts
+    if (
+        module == "__main__"
+        or not module
+        or not attribute
+        or any(not part.isidentifier() or keyword.iskeyword(part) for part in parts)
     ):
-        raise CapsuleConfigError("runtime reference must use the 'module:attribute' form")
+        raise CapsuleConfigError(
+            "runtime reference must use the 'module:attribute' form"
+        )
     return reference
 
 
@@ -378,7 +385,9 @@ def run(
         final_inputs = effective_inputs(config, runtime_inputs)
         for name, value in final_inputs.items():
             if not isinstance(name, str) or not name.isidentifier():
-                raise CapsuleConfigError(f"input name {name!r} must be a Python identifier")
+                raise CapsuleConfigError(
+                    f"input name {name!r} must be a Python identifier"
+                )
             _validate_json_value(value, f"inputs.{name}")
         effective_global_names = (
             set(config.project_defaults.literal_globals)
@@ -480,7 +489,9 @@ def run(
                 started_at=started,
                 finished_at=datetime.now(timezone.utc).isoformat(),
                 status="failed",
-                error_type=error["type"] if error is not None else "CapsuleExecutionError",
+                error_type=error["type"]
+                if error is not None
+                else "CapsuleExecutionError",
             )
             _mirror_logs(
                 selected_level,
@@ -492,7 +503,9 @@ def run(
                 runner_failure=runner_failure,
             )
             raise CapsuleExecutionError(
-                _failure_detail(error, runner_stdout, runner_stderr, completed.returncode),
+                _failure_detail(
+                    error, runner_stdout, runner_stderr, completed.returncode
+                ),
                 run_dir,
                 runtime_export=runtime_export,
                 has_runtime_export=has_runtime_export,
@@ -500,7 +513,9 @@ def run(
                 phase=error.get("phase") if error is not None else None,
             )
         if not result_path.is_file():
-            raise RuntimeError("child exited successfully without writing a return value")
+            raise RuntimeError(
+                "child exited successfully without writing a return value"
+            )
         value = json.loads(result_path.read_text(encoding="utf-8"))
         _record(
             metadata_path,
@@ -519,7 +534,9 @@ def run(
             snippet_stderr=snippet_stderr,
         )
         if runtime_ref is not None and not has_runtime_export:
-            raise RuntimeError("child exited successfully without writing runtime export")
+            raise RuntimeError(
+                "child exited successfully without writing runtime export"
+            )
         return CapsuleResult(
             value=value,
             run_dir=run_dir,
@@ -563,7 +580,9 @@ def run(
             if execution_context_started:
                 raise CapsuleExecutionError(str(exc), run_dir, cause=exc) from exc
             raise CapsuleConfigError(exc.message, run_dir=run_dir) from exc
-        raise CapsuleExecutionError(f"capsule execution failed: {exc}", run_dir, cause=exc) from exc
+        raise CapsuleExecutionError(
+            f"capsule execution failed: {exc}", run_dir, cause=exc
+        ) from exc
     finally:
         for path in capture_paths.values():
             try:

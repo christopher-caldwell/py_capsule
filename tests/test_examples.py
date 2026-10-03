@@ -47,6 +47,6 @@ def test_documented_canonical_examples_run_with_local_fixtures() -> None:
         "example_three",
         "example_five",
     }
-    assert report["example_five"]["runtime_export"]["conversation"]["dialed_numbers"] == [
-        "+15551234567"
-    ]
+    assert report["example_five"]["runtime_export"]["conversation"][
+        "dialed_numbers"
+    ] == ["+15551234567"]

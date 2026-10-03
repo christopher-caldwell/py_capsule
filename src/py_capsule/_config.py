@@ -20,7 +20,9 @@ class CapsuleConfigError(ValueError):
     def __init__(self, message: str, run_dir: Path | None = None):
         self.message = message
         self.run_dir = run_dir
-        detail = f"{message} (run evidence: {run_dir})" if run_dir is not None else message
+        detail = (
+            f"{message} (run evidence: {run_dir})" if run_dir is not None else message
+        )
         super().__init__(detail)
 
 
@@ -89,9 +91,15 @@ def _validate_name(name: Any, source: Path) -> str:
     return name
 
 
-def _validate_injection_names(values: Mapping[str, Any], label: str, source: Path) -> None:
+def _validate_injection_names(
+    values: Mapping[str, Any], label: str, source: Path
+) -> None:
     for name in values:
-        if not isinstance(name, str) or not name.isidentifier() or keyword.iskeyword(name):
+        if (
+            not isinstance(name, str)
+            or not name.isidentifier()
+            or keyword.iskeyword(name)
+        ):
             raise CapsuleConfigError(
                 f"{source}: {label} destination {name!r} must be a Python identifier"
             )
@@ -149,7 +157,9 @@ def _load_layer(data: Mapping[str, Any], source: Path) -> ConfigLayer:
 def _project_directory(capsule_dir: Path, selection: Any, source: Path) -> Path:
     if selection is not None:
         if not isinstance(selection, str) or not selection:
-            raise CapsuleConfigError(f"{source}: project must be a nonempty path string")
+            raise CapsuleConfigError(
+                f"{source}: project must be a nonempty path string"
+            )
         project = (capsule_dir / selection).resolve()
         if project.is_file():
             if project.name != "pyproject.toml":
@@ -172,7 +182,9 @@ def _project_directory(capsule_dir: Path, selection: Any, source: Path) -> Path:
     )
 
 
-def read_capsule_manifest(capsule_dir: str | Path) -> tuple[CapsuleIdentity, dict[str, Any]]:
+def read_capsule_manifest(
+    capsule_dir: str | Path,
+) -> tuple[CapsuleIdentity, dict[str, Any]]:
     capsule = Path(capsule_dir).expanduser().resolve()
     if not capsule.is_dir():
         raise CapsuleConfigError(f"capsule directory does not exist: {capsule}")
@@ -215,7 +227,9 @@ def load_capsule(identity: CapsuleIdentity, data: Mapping[str, Any]) -> CapsuleC
         raise CapsuleConfigError(f"{project_file}: [tool] must be a TOML table")
     py_capsule_section = tool_section.get("py_capsule", {})
     if not isinstance(py_capsule_section, dict):
-        raise CapsuleConfigError(f"{project_file}: [tool.py_capsule] must be a TOML table")
+        raise CapsuleConfigError(
+            f"{project_file}: [tool.py_capsule] must be a TOML table"
+        )
     project_defaults = _load_layer(py_capsule_section, project_file)
     return CapsuleConfig(
         name=name,
@@ -227,15 +241,23 @@ def load_capsule(identity: CapsuleIdentity, data: Mapping[str, Any]) -> CapsuleC
     )
 
 
-def validate_runtime_mapping(value: Mapping[str, Any] | None, label: str) -> dict[str, Any]:
+def validate_runtime_mapping(
+    value: Mapping[str, Any] | None, label: str
+) -> dict[str, Any]:
     if value is None:
         return {}
     if not isinstance(value, Mapping):
         raise CapsuleConfigError(f"{label} must be a mapping")
     result = dict(value)
     for name, item in result.items():
-        if not isinstance(name, str) or not name.isidentifier() or keyword.iskeyword(name):
-            raise CapsuleConfigError(f"{label} key {name!r} must be a Python identifier")
+        if (
+            not isinstance(name, str)
+            or not name.isidentifier()
+            or keyword.iskeyword(name)
+        ):
+            raise CapsuleConfigError(
+                f"{label} key {name!r} must be a Python identifier"
+            )
         if label == "globals" and name == _RUNNER_GLOBAL_NAME:
             raise CapsuleConfigError(
                 f"global name {name!r} is reserved by the capsule runner"

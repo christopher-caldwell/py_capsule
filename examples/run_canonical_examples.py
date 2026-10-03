@@ -151,7 +151,10 @@ def run_examples() -> dict[str, Any]:
                 "value": three.value,
                 "runtime_export": three.runtime_export,
             },
-            "example_five": {"value": five.value, "runtime_export": five.runtime_export},
+            "example_five": {
+                "value": five.value,
+                "runtime_export": five.runtime_export,
+            },
         }
     finally:
         server.shutdown()

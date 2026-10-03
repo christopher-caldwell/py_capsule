@@ -7,10 +7,50 @@ inside the selected child project to provide live Python globals. It does not
 sandbox the snippet: filesystem, network, environment and subprocess access
 remain available to the code.
 
-## Install for a wrapper
+The first release is **0.0.1 (alpha)**. The API is experimental and may change
+in any `0.x` release, including patches. Pin the exact version in applications
+and review changes before upgrading; `0.0.1` does not promise a stable API.
 
-The executable wrapper imports `py_capsule` in its own environment. For a local
-checkout, a small wrapper project can depend on the source tree directly:
+## Development
+
+Install Python 3.11+, [uv](https://docs.astral.sh/uv/getting-started/installation/),
+and [just](https://just.systems/man/en/packages.html), then run:
+
+```sh
+just                 # list commands
+just format          # apply formatting
+just check           # format check, lint, types, tests, canonical examples
+just build           # wheel/sdist metadata and installed-wheel acceptance
+```
+
+Ruff, ty, pytest, and Twine are managed by uv; recipes sync their locked versions.
+The supplied capsule bodies are immutable fixtures, excluded from static tooling
+and verified by hashes and execution tests. All other Python files are checked.
+
+For maintainers, `just publish patch` (or `minor` / `major`) prepares the version
+commit, annotated tag, and GitHub Release. GitHub Actions publishes to PyPI with
+Trusted Publishing. Use `just publish-initial` for the first **0.0.1** release.
+See [releasing](docs/releasing.md) for setup, prerequisites, and recovery.
+
+## Install
+
+The PyPI distribution is named `capsule-runner`; the Python import remains
+`py_capsule`.
+
+PyCapsule requires Python 3.11 or newer and the `uv` executable on `PATH`.
+Install the package in the caller or wrapper environment; capsules themselves
+execute inside their selected `uv` project.
+
+For a published release:
+
+```sh
+uv add capsule-runner==0.0.1
+# or
+python -m pip install capsule-runner==0.0.1
+```
+
+Until the first PyPI release is published, a development checkout can be wired
+into a wrapper project explicitly:
 
 ```toml
 # wrapper-project/pyproject.toml
@@ -18,10 +58,10 @@ checkout, a small wrapper project can depend on the source tree directly:
 name = "capsule-wrapper"
 version = "0.1.0"
 requires-python = ">=3.11"
-dependencies = ["py-capsule"]
+dependencies = ["capsule-runner"]
 
 [tool.uv.sources]
-py-capsule = { path = "../py_capsule", editable = true }
+capsule-runner = { path = "../py_capsule", editable = true }
 ```
 
 Run the wrapper with `uv run --project /path/to/wrapper-project /path/to/wrapper-project/wrapper.py`.
@@ -61,9 +101,13 @@ result.print_json()
 `run()` is quiet on caller stdout. `result.print_json()` deliberately writes
 only the returned JSON value there. Captured snippet output is retained under
 `~/.py_capsule/<name>/runs/<run-id>/`; the result exposes that directory as
-`result.run_dir`. See [docs/configuration.md](docs/configuration.md) for the
-manifest, project selection, layered defaults, environment globals, failure
-and logging details.
+`result.run_dir`. Capsule manifests may define `[inputs]`, `[globals]`, and `[env]`.
+Call-time inputs and globals override capsule values, which override
+`[tool.py_capsule]` defaults from the selected project. `[env]` maps an
+injected global name to a host environment variable name. The optional
+`project` setting selects the `uv` project; without it, PyCapsule finds the
+nearest ancestor `pyproject.toml` from the capsule directory. Log levels are
+`none`, `error`, `info`, and `debug`.
 
 ## Child-local runtime globals
 
@@ -192,3 +236,7 @@ uv run --project examples/wrapper python examples/run_canonical_examples.py
 It prints a JSON report for all four examples and also checks the fetch-record
 business-error path. It binds the local fixture to an available loopback port,
 then shuts it down when the runs finish.
+
+## License
+
+PyCapsule is available under the [MIT license](LICENSE).

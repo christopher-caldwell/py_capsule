@@ -15,9 +15,7 @@ class SessionAPI:
         self._state = state
 
     def log_event(self, message: Any, details: Any = None) -> None:
-        self._state["events"].append(
-            {"message": str(message), "details": details}
-        )
+        self._state["events"].append({"message": str(message), "details": details})
         print(str(message), file=sys.stderr)
 
     def set_value(self, name: str, value: Any) -> None:
