@@ -233,3 +233,7 @@ uv run --project examples/wrapper python examples/run_canonical_examples.py
 It prints a JSON report for all four examples and also checks the fetch-record
 business-error path. It binds the local fixture to an available loopback port,
 then shuts it down when the runs finish.
+
+## License
+
+PyCapsule is available under the [MIT license](LICENSE).

@@ -4,7 +4,13 @@ The first public version is **0.0.1**, with Alpha development status. The API ma
 change in any `0.x` release, including patches; consumers should pin exact versions.
 This is a normal installable Python version, not a promise of 1.0 API stability.
 
-PyPI is the Python package index used by pip and uv. A published GitHub Release
+PyPI (the Python Package Index) is the public directory where people find and
+download Python libraries. Once PyCapsule is published there, a user can install
+it with `pip install py-capsule==0.0.1` or `uv add py-capsule==0.0.1`.
+GitHub hosts the source code and runs the automation; PyPI hosts the installable
+package. You only need to set up the publishing connection once.
+
+A published GitHub Release
 triggers `.github/workflows/release.yml`, which validates and uploads the exact
 built artifacts to PyPI using OIDC / Trusted Publishing. The local command never
 uploads to PyPI or needs a PyPI token. Repository visibility does not make files
@@ -18,18 +24,21 @@ published to public PyPI private.
 - Run `gh auth login --hostname github.com` and configure Git push access.
   The authenticated account needs write access to this repository. Local Git
   author identity and any commit/tag signing configuration must also work.
-- **Choose a license.** Commit its nonempty root `LICENSE*` or `COPYING*` file;
-  declare an SPDX string in `[project].license` and matching paths/globs in
-  `[project].license-files`. This task intentionally does not choose a license.
-  The shared local/CI gate blocks publication until these are present.
+- PyCapsule uses the **MIT license**, declared in `pyproject.toml` and included
+  in the root `LICENSE` file. The shared local/CI gate checks this metadata and
+  committed text before publication.
 - Create a GitHub environment named `pypi`. Configure required reviewers if your
   repository plan supports them; then each upload waits for an approval there.
   Ensure repository Actions and the release workflow are enabled, and that tag
   deployment restrictions permit `v*` tags. Branch/tag rules must permit the
   owner's release commit and annotated tag to be pushed; the command bypasses no
   protection and never force-pushes.
-- For a new PyPI project, configure a **pending Trusted Publisher** in your PyPI
-  account with project `py-capsule`, owner `christopher-caldwell`, repository
+- Create a [PyPI account](https://pypi.org/account/register/), verify your email,
+  and enable two-factor authentication. In your account's
+  [Publishing settings](https://pypi.org/manage/account/publishing/), configure
+  a **pending Trusted Publisher** for a new PyPI project. This authorizes this
+  repository's GitHub Actions workflow to upload packages on your behalf.
+  Use project `py-capsule`, owner `christopher-caldwell`, repository
   `py_capsule`, workflow `release.yml`, and environment `pypi`. If the project
   already exists, confirm ownership and add its ordinary Trusted Publisher.
   A pending publisher does not reserve the name. No API token is required.
