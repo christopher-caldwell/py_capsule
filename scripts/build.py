@@ -6,6 +6,8 @@ import shutil
 import subprocess
 import tempfile
 
+from scripts.validate_artifacts import compare_wheels, inspect_distributions
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -18,8 +20,7 @@ def main() -> None:
         subprocess.run(
             ["uv", "build", "--no-sources", "--out-dir", str(artifacts)], check=True
         )
-        (wheel,) = artifacts.glob("*.whl")
-        (sdist,) = artifacts.glob("*.tar.gz")
+        wheel, sdist = inspect_distributions(artifacts)
         subprocess.run(
             [
                 "uv",
@@ -44,11 +45,37 @@ def main() -> None:
         )
         env = {**os.environ, "PYTHONPATH": "", "HOME": str(temporary / "home")}
         subprocess.run(
+            [
+                str(python),
+                str(ROOT / "scripts/validate_artifacts.py"),
+                "installed",
+                str(ROOT),
+            ],
+            cwd=temporary,
+            env=env,
+            check=True,
+        )
+        subprocess.run(
             [str(python), str(ROOT / "examples/run_canonical_examples.py")],
             cwd=temporary,
             env=env,
             check=True,
         )
+        rebuilt = temporary / "rebuilt"
+        subprocess.run(
+            [
+                "uv",
+                "build",
+                "--wheel",
+                "--no-sources",
+                "--out-dir",
+                str(rebuilt),
+                str(sdist),
+            ],
+            check=True,
+        )
+        (rebuilt_wheel,) = rebuilt.glob("*.whl")
+        compare_wheels(wheel, rebuilt_wheel)
         destination = ROOT / "dist"
         if destination.exists():
             shutil.rmtree(destination)

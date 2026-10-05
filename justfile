@@ -23,17 +23,17 @@ test:
     uv run --locked python -m pytest
 
 # Check example locks and exercise all four canonical capsules locally.
-examples:
+acceptance:
     uv lock --check --project examples/wrapper
     uv lock --check --project examples/fixture-project
     uv run --frozen --project examples/wrapper python examples/run_canonical_examples.py
 
-# Build wheel/sdist, check metadata, and exercise the installed wheel.
+# Inspect wheel/sdist, check metadata, exercise the wheel, and rebuild the sdist.
 build:
     uv run --locked python -m scripts.build
 
 # Everyday non-mutating validation.
-check: format-check lint typecheck test examples
+check: format-check lint typecheck test acceptance
 
 # Bump patch/minor/major, validate, commit, tag, push, and publish a GitHub Release.
 publish bump:

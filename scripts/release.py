@@ -111,7 +111,7 @@ def preflight() -> tuple[str, str, dict[str, bool]]:
     if head != git("rev-parse", "origin/main"):
         raise RuntimeError(
             "main must equal origin/main; use git pull --ff-only if behind. "
-            "For an interrupted local release, see docs/releasing.md."
+            "For an interrupted local release, see docs/maintainers/releasing.md."
         )
     return version, head, releases()
 
@@ -177,7 +177,7 @@ def publish(mode: str, bump: str | None = None) -> None:
         raise RuntimeError("no new commits since the current release")
     if git("log", "-1", "--format=%s") == f"chore: release {current_tag}":
         raise RuntimeError(
-            "release commit already prepared; see recovery in docs/releasing.md"
+            "release commit already prepared; see recovery in docs/maintainers/releasing.md"
         )
 
     if mode == "initial":
@@ -233,7 +233,7 @@ def publish(mode: str, bump: str | None = None) -> None:
         )
     except subprocess.CalledProcessError as exc:
         raise RuntimeError(
-            f"atomic push failed; local {tag} is retained. Follow docs/releasing.md "
+            f"atomic push failed; local {tag} is retained. Follow docs/maintainers/releasing.md "
             "to push this exact commit/tag, then run just publish-resume."
         ) from exc
     create_release(tag)
