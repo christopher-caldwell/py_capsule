@@ -1,4 +1,4 @@
-"""Illustrative local HTTP fixture, not an authentic Decagon service."""
+"""Illustrative local HTTP fixture."""
 
 from __future__ import annotations
 

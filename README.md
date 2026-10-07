@@ -189,8 +189,7 @@ fixture project and is imported and built by its `uv` child.
 
 The repository includes the supplied function-body shape, a project-owned
 `lib.helpers`, a `requests` target dependency, a separate wrapper environment,
-and a local HTTP fixture. The helper and service are illustrative and do not
-claim to reproduce proprietary Decagon behavior.
+and a local HTTP fixture. The helper and service are illustrative.
 
 From the repository root, in one terminal, start the fixture:
 
